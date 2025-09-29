@@ -22,7 +22,6 @@ def login_request(securityToken):
   headers = {
     'securityToken': securityToken,
     'Content-Type': 'application/json',
-    # 'Cookie': 'PHPSESSID=033l66bs0iru3kfv02r1glqer7'
     }
 
   #  POST to API
