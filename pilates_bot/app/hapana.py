@@ -112,13 +112,15 @@ class HapanaClient:
         assert last is not None
         raise last
 
-    @staticmethod
-    def _auth_headers(auth: Auth) -> dict:
+    def _auth_headers(self, auth: Auth) -> dict:
+        # Same headers the website's own request helper adds to every logged-in call.
         h = {
             "content-type": "application/json",
             "authorization": "Bearer " + auth.access_token,
             "bypasstoken": "false",
             "securitytoken": auth.security_token,
+            "wID": self.widget_id,
+            "appID": "1",
         }
         if auth.cookie:
             h["Cookie"] = "PHPSESSID=" + auth.cookie
@@ -203,7 +205,8 @@ class HapanaClient:
 
     def client_packages(self, auth: Auth) -> list[dict]:
         """Everything the person owns (packs and memberships), for the 'Find my class packs' page."""
-        _, data = self._call("GET", "/client/packages", headers=self._auth_headers(auth))
+        _, data = self._call("GET", "/client/packages", headers=self._auth_headers(auth),
+                             params={"clientID": auth.client_id})
         found = _find_list(data, "packages")
         if found is None:
             raise HapanaError("Unexpected packages reply: " + (_message(data) or "no list"), retryable=True)
