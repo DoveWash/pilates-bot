@@ -46,6 +46,11 @@ button.small, .btn.small { padding: 3px 10px; font-size: .85rem; }
 .row > div { flex: 1 1 180px; }
 pre { white-space: pre-wrap; font-size: .85rem; background: var(--bg); padding: 12px; border-radius: 8px; overflow-x: auto; }
 tr.dim td { opacity: .55; }
+#loadbar { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--accent); z-index: 10; opacity: 0; }
+body.loading #loadbar { opacity: 1; animation: loadbar 8s cubic-bezier(.1, .7, .2, 1) forwards; }
+@keyframes loadbar { from { width: 0; } to { width: 92%; } }
+body.loading main { opacity: .6; transition: opacity .2s .15s; }
+button:disabled { opacity: .7; cursor: progress; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; margin-bottom: 6px; }
 .tabs { display: flex; gap: 4px; }
 .tab { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; color: var(--text); }

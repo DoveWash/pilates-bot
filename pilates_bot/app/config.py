@@ -14,8 +14,8 @@ DATA_DIR = os.environ.get("DATA_DIR", "/data")
 @dataclass
 class Settings:
     timezone: str = "Australia/Sydney"
-    # Booking opens this many days ahead (the old bot looked at today..today+6).
-    days_ahead: int = 6
+    # Booking opens at midnight this many days ahead (checked on the live timetable: 7).
+    days_ahead: int = 7
     # Local time the booking window opens.
     run_at: str = "00:00:00"
     # Log everyone in this many seconds before run_at so the booking fires instantly.

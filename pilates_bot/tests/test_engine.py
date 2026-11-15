@@ -23,6 +23,10 @@ class FakeClient:
         return Auth("sec", "tok", email, None)
 
     def list_sessions(self, auth, site_id, start, end):
+        self.world["lists"] = self.world.get("lists", 0) + 1
+        if self.world.get("expire_once"):
+            self.world["expire_once"] = False
+            raise HapanaError("Token expired", retryable=False, status=401)
         return [dict(s) for s in self.world["sessions"] if s["site"] == site_id]
 
     def valid_credits(self, auth, site_id, session):
@@ -239,6 +243,48 @@ def test_find_rule_dedupes(env):
     assert r and r["id"] == env["rule"]
     assert db.find_rule(site_id=BELCO, on_date="2026-11-25", session_id="", weekday=2, start_time="18:00",
                         session_name="Reformer Pilates") is None
+
+
+def test_logins_are_reused(env):
+    eng, world = env["engine"], env["world"]
+    em = env["db"].member(env["a"])
+    eng.timetable(em, BELCO, TARGET, TARGET)
+    eng.clear_timetable_cache()
+    eng.timetable(em, BELCO, TARGET, TARGET)
+    eng.run([TARGET])
+    assert world["logins"].count("em@x") == 1
+
+
+def test_expired_login_retried(env):
+    eng, world = env["engine"], env["world"]
+    em = env["db"].member(env["a"])
+    eng.timetable(em, BELCO, TARGET, TARGET)
+    eng.clear_timetable_cache()
+    world["expire_once"] = True
+    assert len(eng.timetable(em, BELCO, TARGET, TARGET)) == 2
+    assert world["logins"].count("em@x") == 2  # one fresh login after the rejection
+
+
+def test_password_change_forces_new_login(env):
+    eng, world, db = env["engine"], env["world"], env["db"]
+    eng.timetable(db.member(env["a"]), BELCO, TARGET, TARGET)
+    db.save_member(env["a"], name="Em", email="em@x", password_enc=env["vault"].encrypt("new"),
+                   package_subscription_id="PKG", discord_user_id="", ha_notify_service="", enabled=1)
+    eng.clear_timetable_cache()
+    eng.timetable(db.member(env["a"]), BELCO, TARGET, TARGET)
+    assert world["logins"].count("em@x") == 2
+
+
+def test_timetable_cached_until_a_run(env):
+    eng, world = env["engine"], env["world"]
+    em = env["db"].member(env["a"])
+    first = eng.timetable(em, BELCO, TARGET, TARGET)
+    first[0]["_plans"] = ["mutated by the page"]
+    second = eng.timetable(em, BELCO, TARGET, TARGET)
+    assert world["lists"] == 1 and "_plans" not in second[0]  # cached, and callers can't corrupt it
+    eng.run([TARGET], notify=False)
+    eng.timetable(em, BELCO, TARGET, TARGET)
+    assert world["lists"] == 1 + 2 + 1  # run listed once per member, then the page refetched
 
 
 def test_helpers():

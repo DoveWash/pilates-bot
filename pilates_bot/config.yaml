@@ -1,5 +1,5 @@
 name: Pilates Bot
-version: "2.2.0"
+version: "2.3.0"
 slug: pilates_bot
 description: Books regular pilates/yoga classes the moment they open, for you and your friends
 url: https://github.com/DoveWash/pilates-bot
@@ -16,7 +16,7 @@ panel_title: Pilates Bot
 homeassistant_api: true
 options:
   timezone: Australia/Sydney
-  days_ahead: 6
+  days_ahead: 7
   run_at: "00:00:00"
   prelogin_seconds: 90
   retry_minutes: "0.5,2,5,15,60"

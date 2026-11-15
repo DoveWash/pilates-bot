@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ base }}/static/style.css">
 </head>
 <body>
+<div id="loadbar" aria-hidden="true"></div>
 <header>
   <strong>🤖 Pilates Bot</strong>
   <nav>
@@ -24,5 +25,35 @@
   {% if err %}<div class="flash bad">{{ err }}</div>{% endif %}
   {% block content %}{% endblock %}
 </main>
+<script>
+// Instant feedback: show a loading bar on navigation, and "Working…" + no double-clicks on forms.
+(function () {
+  var busy = function () { document.body.classList.add("loading"); };
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest("a[href]");
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || a.target) return;
+    if (a.getAttribute("href").charAt(0) === "#" || a.href.indexOf("javascript:") === 0) return;
+    busy();
+  });
+  document.addEventListener("submit", function (e) {
+    if (e.defaultPrevented) return;            // e.g. a cancelled confirm()
+    var form = e.target;
+    if (form.dataset.busy) { e.preventDefault(); return; }
+    form.dataset.busy = "1";
+    busy();
+    var btn = e.submitter || form.querySelector("button[type=submit], button:not([type])");
+    if (btn && form.method.toLowerCase() === "post") {
+      var label = /book/i.test(btn.textContent) ? "Booking…" : "Working…";
+      setTimeout(function () { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = label; }, 0);
+    }
+  });
+  // Coming back with the browser's Back button: reset everything.
+  window.addEventListener("pageshow", function () {
+    document.body.classList.remove("loading");
+    document.querySelectorAll("form[data-busy]").forEach(function (f) { delete f.dataset.busy; });
+    document.querySelectorAll("button[data-label]").forEach(function (b) { b.disabled = false; b.textContent = b.dataset.label; });
+  });
+})();
+</script>
 </body>
 </html>

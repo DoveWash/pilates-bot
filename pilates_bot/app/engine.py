@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -156,7 +157,13 @@ class Engine:
         self.client_factory = client_factory or (lambda: HapanaClient(settings.widget_id))
         self.tz = ZoneInfo(settings.timezone)
         self._run_lock = threading.Lock()
-        self._prepared: dict[int, tuple[HapanaClient, Auth]] = {}
+        # Logged-in sessions, reused so the UI doesn't log in on every click.
+        self._sessions: dict[int, tuple[str, float, HapanaClient, Auth]] = {}
+        self._sessions_lock = threading.Lock()
+        self._timetables: dict[tuple, tuple[float, list[dict]]] = {}
+
+    LOGIN_TTL = 30 * 60      # reuse a login for up to 30 minutes
+    TIMETABLE_TTL = 60       # reuse a downloaded timetable for a minute
 
     def today(self) -> date:
         return datetime.now(self.tz).date()
@@ -165,26 +172,49 @@ class Engine:
         return (on or self.today()) + timedelta(days=self.settings.days_ahead)
 
     # -- login ------------------------------------------------------------
-    def _login(self, member) -> tuple[HapanaClient, Auth]:
+    def _login(self, member, fresh: bool = False) -> tuple[HapanaClient, Auth]:
+        """A logged-in client for this person, reused while it's recent. fresh=True forces a new login."""
+        key = f"{member['email']}|{member['password_enc']}"  # a changed email/password invalidates it
+        now = time.monotonic()
+        with self._sessions_lock:
+            cached = self._sessions.get(member["id"])
+        if cached and not fresh and cached[0] == key and now - cached[1] < self.LOGIN_TTL:
+            return cached[2], cached[3]
         client = self.client_factory()
         auth = client.login(member["email"], self.vault.decrypt(member["password_enc"]))
+        with self._sessions_lock:
+            self._sessions[member["id"]] = (key, now, client, auth)
         return client, auth
 
+    def _with_login(self, member, call):
+        """Run call(client, auth); if the reused login was rejected, log in again and retry once."""
+        client, auth = self._login(member)
+        try:
+            return call(client, auth)
+        except HapanaError as exc:
+            if not exc.is_auth:
+                raise
+            client, auth = self._login(member, fresh=True)
+            return call(client, auth)
+
+    def forget_login(self, member_id: int):
+        with self._sessions_lock:
+            self._sessions.pop(member_id, None)
+
     def test_login(self, member) -> str:
-        _, auth = self._login(member)
+        _, auth = self._login(member, fresh=True)
         return f"Login OK (client id {auth.client_id})"
 
     def find_packs(self, member) -> list[dict]:
-        client, auth = self._login(member)
-        return client.client_packages(auth)
+        return self._with_login(member, lambda c, a: c.client_packages(a))
 
     def prepare(self):
-        """Log everyone in ahead of the booking window so the booking itself is instant."""
+        """Fresh logins just before the booking window so the booking itself is instant."""
         members = self.db.members_with_rules()
 
         def go(m):
             try:
-                self._prepared[m["id"]] = self._login(m)
+                self._login(m, fresh=True)
             except Exception as exc:  # noqa: BLE001 - retried at run time anyway
                 log.warning("Pre-login failed for %s: %s", m["name"], exc)
 
@@ -192,8 +222,17 @@ class Engine:
             list(pool.map(go, members))
 
     def timetable(self, member, site_id: str, start: date, end: date) -> list[dict]:
-        client, auth = self._login(member)
-        return [enrich(s, site_id) for s in client.list_sessions(auth, site_id, start, end)]
+        key = (member["id"], site_id, start, end)
+        hit = self._timetables.get(key)
+        if hit and time.monotonic() - hit[0] < self.TIMETABLE_TTL:
+            return [dict(s) for s in hit[1]]
+        sessions = [enrich(s, site_id) for s in
+                    self._with_login(member, lambda c, a: c.list_sessions(a, site_id, start, end))]
+        self._timetables[key] = (time.monotonic(), sessions)
+        return [dict(s) for s in sessions]
+
+    def clear_timetable_cache(self):
+        self._timetables.clear()
 
     # -- run --------------------------------------------------------------
     def run(self, dates: list[date], kind: str = "scheduled", notify: bool = True,
@@ -219,7 +258,7 @@ class Engine:
                 rlog("RUN CRASHED: %r", exc)
                 outcomes.append(Outcome(0, "Pilates Bot", "error", f"Run crashed: {exc}"))
             finally:
-                self._prepared.clear()
+                self.clear_timetable_cache()  # booking statuses changed - next page view refetches
                 counts: dict[str, int] = {}
                 for o in outcomes:
                     counts[o.status] = counts.get(o.status, 0) + 1
@@ -242,7 +281,7 @@ class Engine:
         if not rules:
             return []
         try:
-            client, auth = self._prepared.pop(m["id"], None) or self._login(m)
+            client, auth = self._login(m)
         except (HapanaError, ValueError) as exc:
             rlog("[%s] login failed: %s", name, exc)
             return [Outcome(m["id"], name, "login_failed", str(exc))]
@@ -256,8 +295,8 @@ class Engine:
                 except HapanaError as exc:
                     if not exc.is_auth:
                         raise
-                    rlog("[%s] token rejected, logging in again", name)
-                    client, auth = self._login(m)
+                    rlog("[%s] login expired, logging in again", name)
+                    client, auth = self._login(m, fresh=True)
                     raw = client.list_sessions(auth, site_id, start, end)
                 sessions.extend(enrich(s, site_id) for s in raw)
             except HapanaError as exc:
@@ -359,7 +398,14 @@ class Engine:
             return save(status, pack_note)
 
         try:
-            result = client.checkout(auth, s, s["_site_id"], pack_id)
+            try:
+                result = client.checkout(auth, s, s["_site_id"], pack_id)
+            except HapanaError as exc:
+                if not exc.is_auth:
+                    raise
+                rlog("[%s] login expired at checkout, logging in again", name)
+                client, auth = self._login(m, fresh=True)
+                result = client.checkout(auth, s, s["_site_id"], pack_id)
         except HapanaError as exc:
             # An expired token is worth retrying (next run logs in fresh); other hard errors aren't.
             final = (not exc.retryable and not exc.is_auth) or tries + 1 >= self.settings.max_tries

@@ -17,7 +17,7 @@
   <form method="get" action="{{ base }}/timetable" class="viewas">
     <input type="hidden" name="site_id" value="{{ site_id }}"><input type="hidden" name="start" value="{{ start.isoformat() }}">
     <label for="member_id" class="muted">Showing bookings for</label>
-    <select id="member_id" name="member_id" onchange="this.form.submit()">{% for m in members %}<option value="{{ m.id }}" {{ "selected" if m.id == member_id }}>{{ m.name }}</option>{% endfor %}</select>
+    <select id="member_id" name="member_id" onchange="document.body.classList.add('loading'); this.form.submit()">{% for m in members %}<option value="{{ m.id }}" {{ "selected" if m.id == member_id }}>{{ m.name }}</option>{% endfor %}</select>
   </form>
   {% endif %}
 </div>

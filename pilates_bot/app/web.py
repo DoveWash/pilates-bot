@@ -315,6 +315,8 @@ def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> Fast
             ha_notify_service=(f.get("ha_notify_service") or "").strip(),
             enabled=1 if f.get("enabled") else 0,
         )
+        engine.forget_login(member_id)  # email/password may have changed
+        engine.clear_timetable_cache()
         return go(request, "/members", msg=f"Saved {name}")
 
     @app.post("/members/{member_id}/test")
