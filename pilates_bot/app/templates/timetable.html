@@ -1,31 +1,69 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Timetable</h1>
+<h1>Book a class</h1>
 {% if not members %}
 <p class="muted">Add at least one person on the <a href="{{ base }}/members">People</a> page first. Their login is used to read the timetable.</p>
 {% else %}
-<form class="card row" method="get" action="{{ base }}/timetable">
-  <div><label for="site_id">Site</label>
-    <select id="site_id" name="site_id">{% for s in sites %}<option value="{{ s.id }}" {{ "selected" if s.id == site_id }}>{{ s.name }}</option>{% endfor %}</select></div>
-  <div><label for="start">Week starting</label><input type="date" id="start" name="start" value="{{ start }}"></div>
-  <div><label for="member_id">View as</label>
-    <select id="member_id" name="member_id">{% for m in members %}<option value="{{ m.id }}" {{ "selected" if m.id == member_id }}>{{ m.name }}</option>{% endfor %}</select></div>
-  <div><button class="primary" type="submit">Show classes</button></div>
-</form>
+<div class="toolbar">
+  <div class="tabs">
+    {% for s in sites %}<a class="tab {{ 'on' if s.id == site_id }}" href="{{ base }}/timetable?site_id={{ s.id|urlencode }}&start={{ start.isoformat() }}&member_id={{ member_id }}">{{ s.name }}</a>{% endfor %}
+  </div>
+  <div class="weeknav">
+    {% if prev %}<a class="btn small" href="{{ base }}/timetable?site_id={{ site_id|urlencode }}&start={{ prev.isoformat() }}&member_id={{ member_id }}">← Prev</a>{% endif %}
+    <strong>{{ start.strftime("%d %b") }} – {{ week_end.strftime("%d %b") }}</strong>
+    <a class="btn small" href="{{ base }}/timetable?site_id={{ site_id|urlencode }}&start={{ next.isoformat() }}&member_id={{ member_id }}">Next →</a>
+  </div>
+  {% if members|length > 1 %}
+  <form method="get" action="{{ base }}/timetable" class="viewas">
+    <input type="hidden" name="site_id" value="{{ site_id }}"><input type="hidden" name="start" value="{{ start.isoformat() }}">
+    <label for="member_id" class="muted">Showing bookings for</label>
+    <select id="member_id" name="member_id" onchange="this.form.submit()">{% for m in members %}<option value="{{ m.id }}" {{ "selected" if m.id == member_id }}>{{ m.name }}</option>{% endfor %}</select>
+  </form>
+  {% endif %}
+</div>
 
-{% if sessions is not none %}
-<div class="table-wrap"><table>
-  <tr><th>When</th><th>Class</th><th>Instructor</th><th>Status</th><th></th></tr>
-  {% for s in sessions %}
-  <tr>
-    <td>{{ s._date.strftime("%a %d %b") if s._date else s.sessionDate }} {{ s._start }}</td>
-    <td>{{ s.sessionName }}</td>
-    <td>{{ s._instructor }}</td>
-    <td>{{ s.sessionStatus }}{% if s.bookingStatus %} · <strong>{{ s.bookingStatus }}</strong>{% endif %}</td>
-    <td><a class="btn small" href="{{ base }}/rules/new?site_id={{ site_id|urlencode }}&weekday={{ s._date.weekday() if s._date else '' }}&start_time={{ s._start|urlencode }}&session_name={{ s.sessionName|urlencode }}&session_id={{ s.sessionID|urlencode }}&label={{ (((WEEKDAYS[s._date.weekday()] + ' ') if s._date else '') ~ s.sessionName ~ ' ' ~ s._start)|urlencode }}">+ Book every week</a></td>
-  </tr>
-  {% else %}<tr><td colspan="5" class="muted">No classes found for that week.</td></tr>{% endfor %}
-</table></div>
+{% if days is not none %}
+  {% for day, sessions in days %}
+  <h2>{{ day.strftime("%A %d %B") }}</h2>
+  <div class="classlist">
+    {% for s in sessions %}
+    <details class="cls">
+      <summary>
+        <span class="time">{{ s._start }}</span>
+        <span class="what"><strong>{{ s.sessionName }}</strong>{% if s._instructor %}<span class="muted"> · {{ s._instructor }}</span>{% endif %}</span>
+        <span class="chips">
+          {% if s.bookingStatus %}<span class="badge s-booked">{{ s.bookingStatus }}</span>{% endif %}
+          {% for a in s._attempts %}<span class="badge s-{{ a.status }}">{{ a.name }}: {{ STYLE.get(a.status, ("", 0, a.status))[2] }}</span>{% endfor %}
+          {% for p in s._plans %}<span class="badge">{{ "🔁" if p.kind == "weekly" else "📅" }} {{ p.people|join(", ") }}</span>{% endfor %}
+          {% if s.sessionStatus and s.sessionStatus|lower != "open" %}<span class="badge s-not_open">{{ s.sessionStatus }}</span>
+          {% elif not s._open %}<span class="muted small">opens {{ s._opens_on.strftime("%a %d %b") }}</span>{% endif %}
+        </span>
+        <span class="btn small primary">Book</span>
+      </summary>
+      <form method="post" action="{{ base }}/book" class="bookform">
+        <input type="hidden" name="back" value="{{ back }}">
+        <input type="hidden" name="site_id" value="{{ site_id }}">
+        <input type="hidden" name="session_id" value="{{ s.sessionID }}">
+        <input type="hidden" name="session_date" value="{{ s._date.isoformat() }}">
+        <input type="hidden" name="session_name" value="{{ s.sessionName }}">
+        <input type="hidden" name="start_time" value="{{ s._start }}">
+        <div class="checks"><span class="muted">Who:</span>
+          {% for m in members %}<label><input type="checkbox" name="member_ids" value="{{ m.id }}" {{ "checked" if m.id == member_id }}> {{ m.name }}</label>{% endfor %}
+        </div>
+        <div class="checks"><span class="muted">How often:</span>
+          <label><input type="radio" name="mode" value="once" checked> Just this one</label>
+          <label><input type="radio" name="mode" value="weekly"> Every {{ WEEKDAYS[s._date.weekday()] }} at {{ s._start }}</label>
+        </div>
+        <p class="hint">{% if s._open %}Booking is open, so this books straight away.{% else %}Booking opens {{ s._opens_on.strftime("%a %d %b") }} at {{ settings.run_at[:5] }}. The bot will book it then.{% endif %}</p>
+        <button class="primary" type="submit">{{ "Book now" if s._open else "Book when it opens" }}</button>
+      </form>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No classes found for this week.</p>
+  {% endfor %}
+  <p class="hint">🔁 = booked every week · 📅 = booked just this once. Change or remove these on <a href="{{ base }}/rules">My bookings</a>.</p>
 {% endif %}
 {% endif %}
 {% endblock %}

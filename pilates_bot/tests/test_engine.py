@@ -210,6 +210,37 @@ def test_lookup_fails_falls_back_to_saved(env):
     assert outcomes[0].status == "booked" and env["world"]["packs_used"] == ["PKG"]
 
 
+def test_one_off_only_books_its_date(env):
+    db = env["db"]
+    db.delete_rule(env["rule"])
+    one = db.save_rule(None, [env["a"]], label="once", site_id=BELCO, weekday=2, start_time="18:00",
+                       session_name="Reformer Pilates", instructor="", session_id="REF1", enabled=1,
+                       on_date="2026-12-02")
+    assert env["engine"].run([TARGET])[1] == []  # wrong date: no booking, no "not found" noise
+    env["world"]["sessions"][0]["sessionDate"] = "2026-12-02"
+    _, outcomes = env["engine"].run([date(2026, 12, 2)])
+    assert [(o.member_name, o.status) for o in outcomes] == [("Em", "booked")]
+    assert db.rule(one)["on_date"] == "2026-12-02"
+
+
+def test_rule_ids_limits_run(env):
+    db = env["db"]
+    spin = db.save_rule(None, [env["a"]], label="spin", site_id=BELCO, weekday=2, start_time="07:00",
+                        session_name="Spin", instructor="", session_id="", enabled=1)
+    _, outcomes = env["engine"].run([TARGET], "manual", rule_ids={spin})
+    assert [(o.member_name, o.session_name, o.status) for o in outcomes] == [("Em", "Spin", "booked")]
+    assert env["world"]["checkouts"] == [("em@x", "OTHER")]  # Sarah's/Em's reformer rule untouched
+
+
+def test_find_rule_dedupes(env):
+    db = env["db"]
+    r = db.find_rule(site_id=BELCO, on_date="", session_id="", weekday=2, start_time="18:00",
+                     session_name="Reformer  PILATES")
+    assert r and r["id"] == env["rule"]
+    assert db.find_rule(site_id=BELCO, on_date="2026-11-25", session_id="", weekday=2, start_time="18:00",
+                        session_name="Reformer Pilates") is None
+
+
 def test_helpers():
     assert norm_time("6:00 PM") == "18:00"
     assert norm_time("18:00:00") == "18:00"

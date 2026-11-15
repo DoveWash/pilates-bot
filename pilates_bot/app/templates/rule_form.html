@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ "Edit class" if rule.id else "Add class" }}</h1>
+<h1>{{ "Edit booking" if rule.id else "Add booking" }}</h1>
 <form class="card" method="post" action="{{ base }}/rules/save">
   <input type="hidden" name="id" value="{{ rule.id or '' }}">
-  <label for="label">Name for this class</label>
+  <label for="label">Name</label>
   <input type="text" id="label" name="label" value="{{ rule.label }}" required placeholder="e.g. Wed reformer with the girls">
 
   <div class="row">
@@ -11,25 +11,20 @@
       <select id="site_id" name="site_id" required>
         {% for s in sites %}<option value="{{ s.id }}" {{ "selected" if s.id == rule.site_id }}>{{ s.name }}</option>{% endfor %}
       </select></div>
-    <div><label for="weekday">Day</label>
+    {% if rule.on_date %}
+    <div><label for="on_date">Date (one-off)</label>
+      <input type="date" id="on_date" name="on_date" value="{{ rule.on_date }}"></div>
+    {% else %}
+    <div><label for="weekday">Every</label>
       <select id="weekday" name="weekday">
         <option value="" {{ "selected" if rule.weekday is none }}>Any day</option>
         {% for d in WEEKDAYS %}<option value="{{ loop.index0 }}" {{ "selected" if rule.weekday == loop.index0 }}>{{ d }}</option>{% endfor %}
       </select></div>
+    {% endif %}
     <div><label for="start_time">Start time</label>
-      <input type="time" id="start_time" name="start_time" value="{{ rule.start_time }}"></div>
+      <input type="time" id="start_time" name="start_time" value="{{ rule.start_time }}">
+      {% if not rule.start_time %}<div class="hint">Filled in on the first run.</div>{% endif %}</div>
   </div>
-
-  <label for="session_name">Class name on the booking site</label>
-  <input type="text" id="session_name" name="session_name" value="{{ rule.session_name }}" placeholder="e.g. Reformer Pilates">
-  <div class="hint">Matched with the day and start time. Has to be exactly as shown on the timetable (upper/lower case doesn't matter).</div>
-
-  <label for="instructor">Only with instructor (optional)</label>
-  <input type="text" id="instructor" name="instructor" value="{{ rule.instructor }}">
-
-  <label for="session_id">Series ID (optional)</label>
-  <input type="text" id="session_id" name="session_id" value="{{ rule.session_id }}">
-  <div class="hint">Filled in automatically. Matches this exact recurring class even if its name or time changes.</div>
 
   <label>Book for</label>
   <div class="checks">
@@ -38,12 +33,30 @@
     {% else %}<span class="muted">Add people first on the <a href="{{ base }}/members">People</a> page.</span>{% endfor %}
   </div>
 
-  <div class="checks"><label><input type="checkbox" name="enabled" value="1" {{ "checked" if rule.enabled }}> Active</label></div>
+  <fieldset class="status">
+    <legend>Pause</legend>
+    <div class="checks"><label><input type="checkbox" name="paused" value="1" {{ "checked" if not rule.enabled }}> Pause this booking (keeps it, but the bot won't book it until you untick this)</label></div>
+  </fieldset>
+
+  <details class="adv" {{ "open" if not rule.session_id and not rule.session_name }}>
+    <summary>Advanced: how the bot recognises this class</summary>
+    <label for="session_name">Class name on the booking site</label>
+    <input type="text" id="session_name" name="session_name" value="{{ rule.session_name }}" placeholder="e.g. Reformer Pilates">
+    <div class="hint">Matched together with the day and start time. Filled in automatically.</div>
+
+    <label for="instructor">Only with instructor</label>
+    <input type="text" id="instructor" name="instructor" value="{{ rule.instructor }}">
+
+    <label for="session_id">Series ID</label>
+    <input type="text" id="session_id" name="session_id" value="{{ rule.session_id }}">
+    <div class="hint">The booking site's ID for this recurring class. Matches it even if the name or time changes.</div>
+  </details>
+
   <p><button class="primary" type="submit">Save</button> <a class="btn" href="{{ base }}/rules">Cancel</a></p>
 </form>
 {% if rule.id %}
-<form method="post" action="{{ base }}/rules/{{ rule.id }}/delete" onsubmit="return confirm('Delete this class rule?')">
-  <button class="danger" type="submit">Delete class</button>
+<form method="post" action="{{ base }}/rules/{{ rule.id }}/delete" onsubmit="return confirm('Delete this booking? Classes already booked stay booked.')">
+  <button class="danger" type="submit">Delete booking</button>
 </form>
 {% endif %}
 {% endblock %}

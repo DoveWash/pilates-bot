@@ -74,9 +74,16 @@ def enrich(session: dict, site_id: str) -> dict:
     return session
 
 
+def on_date(rule) -> str:
+    """One-off rules book a single date; weekly rules return ''."""
+    return rule["on_date"] if "on_date" in rule.keys() else ""
+
+
 def matches(rule, s: dict) -> bool:
     d = s.get("_date")
     if d is None or s.get("_site_id") != rule["site_id"]:
+        return False
+    if on_date(rule) and d.isoformat() != on_date(rule):
         return False
     if rule["weekday"] is not None and d.weekday() != rule["weekday"]:
         return False
@@ -189,7 +196,9 @@ class Engine:
         return [enrich(s, site_id) for s in client.list_sessions(auth, site_id, start, end)]
 
     # -- run --------------------------------------------------------------
-    def run(self, dates: list[date], kind: str = "scheduled", notify: bool = True) -> tuple[int, list[Outcome]]:
+    def run(self, dates: list[date], kind: str = "scheduled", notify: bool = True,
+            rule_ids: set[int] | None = None) -> tuple[int, list[Outcome]]:
+        """Book matching classes on `dates`. rule_ids limits the run to those rules (used by 'book now')."""
         with self._run_lock:
             run_id = self.db.start_run(kind)
             rlog = RunLog()
@@ -197,10 +206,13 @@ class Engine:
             try:
                 rlog("%s run for %s", kind, ", ".join(d.isoformat() for d in dates))
                 members = self.db.members_with_rules()
+                if rule_ids is not None:
+                    wanted = {mid for rid in rule_ids for mid in self.db.rule_member_ids(rid)}
+                    members = [m for m in members if m["id"] in wanted]
                 if not members:
                     rlog("No enabled members with enabled rules - nothing to do")
                 with ThreadPoolExecutor(max_workers=max(1, len(members))) as pool:
-                    for result in pool.map(lambda m: self._run_member(m, dates, rlog), members):
+                    for result in pool.map(lambda m: self._run_member(m, dates, rlog, rule_ids), members):
                         outcomes.extend(result)
             except Exception as exc:  # noqa: BLE001 - never let a run die silently
                 log.exception("Run crashed")
@@ -221,9 +233,12 @@ class Engine:
                     log.exception("Notifier failed")
             return run_id, outcomes
 
-    def _run_member(self, m, dates: list[date], rlog: RunLog) -> list[Outcome]:
+    def _run_member(self, m, dates: list[date], rlog: RunLog, rule_ids: set[int] | None = None) -> list[Outcome]:
         name = m["name"]
-        rules = self.db.rules_for_member(m["id"])
+        day_strings = {d.isoformat() for d in dates}
+        rules = [r for r in self.db.rules_for_member(m["id"])
+                 if (rule_ids is None or r["id"] in rule_ids)
+                 and (not on_date(r) or on_date(r) in day_strings)]
         if not rules:
             return []
         try:
@@ -266,6 +281,8 @@ class Engine:
                     outcomes.append(o)
             if not found:
                 for d in dates:
+                    if on_date(rule) and d.isoformat() != on_date(rule):
+                        continue
                     if rule["weekday"] is None or d.weekday() == rule["weekday"]:
                         rlog("[%s] no class matched rule '%s' on %s", name, rule["label"], d)
                         outcomes.append(Outcome(m["id"], name, "not_found",

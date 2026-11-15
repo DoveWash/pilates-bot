@@ -106,8 +106,14 @@ class DB:
         self.lock = threading.RLock()
         with self.lock:
             self.conn.executescript(SCHEMA)
+            self._migrate()
             if not self.one("SELECT 1 FROM sites"):
                 self._seed()
+
+    def _migrate(self):
+        cols = {r["name"] for r in self.q("PRAGMA table_info(rules)")}
+        if "on_date" not in cols:  # v2.2: one-off bookings (a single date instead of every week)
+            self.x("ALTER TABLE rules ADD COLUMN on_date TEXT NOT NULL DEFAULT ''")
 
     def _seed(self):
         self.x("INSERT INTO sites (id, name) VALUES (?, ?)", (YARRA, "Yarralumla"))
@@ -182,7 +188,25 @@ class DB:
 
     # -- rules ------------------------------------------------------------
     def rules(self):
-        return self.q("SELECT * FROM rules ORDER BY weekday, start_time, label")
+        return self.q("SELECT * FROM rules ORDER BY on_date, weekday, start_time, label")
+
+    def find_rule(self, *, site_id: str, on_date: str, session_id: str, weekday, start_time: str,
+                  session_name: str):
+        """An existing rule for the same class (so booking a class twice adds people instead of duplicating)."""
+        for r in self.q("SELECT * FROM rules WHERE site_id=? AND on_date=?", (site_id, on_date)):
+            if session_id and r["session_id"] == session_id and (on_date or r["weekday"] == weekday):
+                return r
+            if (r["weekday"] == weekday and r["start_time"] == start_time
+                    and " ".join(r["session_name"].lower().split()) == " ".join(session_name.lower().split())):
+                return r
+        return None
+
+    def set_rule_enabled(self, rule_id: int, enabled: bool):
+        self.x("UPDATE rules SET enabled=? WHERE id=?", (1 if enabled else 0, rule_id))
+
+    def add_rule_members(self, rule_id: int, member_ids: list[int]):
+        for mid in member_ids:
+            self.x("INSERT OR IGNORE INTO rule_members (rule_id, member_id) VALUES (?, ?)", (rule_id, mid))
 
     def rule(self, rule_id: int):
         return self.one("SELECT * FROM rules WHERE id=?", (rule_id,))
@@ -204,7 +228,9 @@ class DB:
         )
 
     def save_rule(self, rule_id: int | None, member_ids: list[int], **f) -> int:
-        cols = ["label", "site_id", "weekday", "start_time", "session_name", "instructor", "session_id", "enabled"]
+        f.setdefault("on_date", "")
+        cols = ["label", "site_id", "weekday", "start_time", "session_name", "instructor", "session_id", "enabled",
+                "on_date"]
         vals = [f[c] for c in cols]
         with self.lock:
             if rule_id:
