@@ -166,6 +166,9 @@ class DB:
             (*vals, now_iso()),
         )
 
+    def set_member_package(self, member_id: int, package_subscription_id: str):
+        self.x("UPDATE members SET package_subscription_id=? WHERE id=?", (package_subscription_id, member_id))
+
     def delete_member(self, member_id: int):
         self.x("DELETE FROM members WHERE id=?", (member_id,))
 

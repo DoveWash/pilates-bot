@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import json
 import os
 import threading
 from datetime import date, timedelta
@@ -226,6 +227,36 @@ def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> Fast
             return go(request, "/members", msg=f"{m['name']}: {engine.test_login(m)}")
         except (HapanaError, ValueError) as exc:
             return go(request, "/members", err=f"{m['name']}: {exc}")
+
+    @app.get("/members/{member_id}/packs", response_class=HTMLResponse)
+    def member_packs(request: Request, member_id: int):
+        m = db.member(member_id)
+        if not m:
+            return go(request, "/members", err="Member not found")
+        try:
+            packs = engine.find_packs(m)
+        except (HapanaError, ValueError) as exc:
+            return go(request, f"/members/{member_id}", err=f"Couldn't load {m['name']}'s packs: {exc}")
+        rows = []
+        for p in packs:
+            if not isinstance(p, dict):
+                continue
+            pid = p.get("packageSubscriptionID") or p.get("packageSubscriptionId") or ""
+            rows.append({
+                "id": str(pid),
+                "name": p.get("packageName") or p.get("name") or "(unnamed)",
+                "type": p.get("packageType") or p.get("type") or "",
+                "credits": p.get("creditsRemaining", p.get("remaining", "")),
+                "expiry": str(p.get("expiryDate") or p.get("endDate") or "")[:10],
+                "status": p.get("status") or p.get("packageStatus") or "",
+            })
+        return page(request, "packs.html", m=m, rows=rows, raw=json.dumps(packs, indent=2, default=str)[:20000])
+
+    @app.post("/members/{member_id}/use-pack")
+    def member_use_pack(request: Request, member_id: int, package_subscription_id: str = Form("")):
+        db.set_member_package(member_id, package_subscription_id.strip())
+        return go(request, f"/members/{member_id}",
+                  msg="Saved as the preferred pack" if package_subscription_id.strip() else "Cleared - the bot will pick automatically")
 
     @app.post("/members/{member_id}/delete")
     def member_delete(request: Request, member_id: int):

@@ -94,6 +94,35 @@ def matches(rule, s: dict) -> bool:
     return True
 
 
+def _credits_left(pack: dict) -> float:
+    try:
+        return float(pack.get("creditsRemaining") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def usable_packs(credits: list[dict], required) -> list[dict]:
+    """Same choice the website makes at checkout: packs with enough credits left,
+    memberships first (by name), then class packs that expire soonest."""
+    try:
+        need = float(required) if required not in (None, "") else 1.0
+    except (TypeError, ValueError):
+        need = 1.0
+    ok = [c for c in credits if isinstance(c, dict) and c.get("packageSubscriptionID") and _credits_left(c) >= need]
+    memberships = sorted((c for c in ok if c.get("packageType") == "membership"),
+                         key=lambda c: str(c.get("packageName") or ""))
+    packs = sorted((c for c in ok if c.get("packageType") != "membership"),
+                   key=lambda c: str(c.get("expiryDate") or "9999"))
+    return memberships + packs
+
+
+def describe_pack(pack: dict) -> str:
+    left = _credits_left(pack)
+    credits = "unlimited" if left >= 1000 else f"{left:g} credits left"
+    expiry = f", expires {str(pack['expiryDate'])[:10]}" if pack.get("expiryDate") else ""
+    return f"{pack.get('packageName') or 'pack'} ({credits}{expiry})"
+
+
 class RunLog:
     def __init__(self):
         self.lines: list[str] = []
@@ -137,6 +166,10 @@ class Engine:
     def test_login(self, member) -> str:
         _, auth = self._login(member)
         return f"Login OK (client id {auth.client_id})"
+
+    def find_packs(self, member) -> list[dict]:
+        client, auth = self._login(member)
+        return client.client_packages(auth)
 
     def prepare(self):
         """Log everyone in ahead of the booking window so the booking itself is instant."""
@@ -241,6 +274,37 @@ class Engine:
                                                 site_name=sites.get(rule["site_id"], "")))
         return outcomes
 
+    def _pick_pack(self, m, s: dict, client: HapanaClient, auth: Auth, rlog: RunLog) -> tuple[str, str]:
+        """Choose which pack pays for this class. Returns (packageSubscriptionID, description).
+
+        Uses the saved ID while it's still valid, otherwise the pack the website would pick,
+        and remembers it (so a renewed pack just keeps working). Falls back to the saved ID
+        if the site won't say which packs are valid.
+        """
+        name, saved = m["name"], (m["package_subscription_id"] or "").strip()
+        credits = s.get("validCredits") if isinstance(s.get("validCredits"), list) else None
+        if credits is None:
+            try:
+                credits = client.valid_credits(auth, s["_site_id"], s)
+            except HapanaError as exc:
+                rlog("[%s] couldn't check class packs (%s)%s", name, exc, " - using saved pack" if saved else "")
+                return saved, ("saved pack" if saved else f"Couldn't find a class pack to pay with: {exc}")
+
+        usable = usable_packs(credits, s.get("creditsRequired"))
+        if not usable:
+            if saved:
+                rlog("[%s] site listed no usable packs - trying saved pack anyway", name)
+                return saved, "saved pack"
+            return "", "No class pack or membership with credits left for this class"
+
+        chosen = next((p for p in usable if p["packageSubscriptionID"] == saved), usable[0])
+        pid = str(chosen["packageSubscriptionID"])
+        if pid != saved:
+            rlog("[%s] using %s%s", name, describe_pack(chosen),
+                 " (saved pack is no longer valid)" if saved else "")
+            self.db.set_member_package(m["id"], pid)
+        return pid, describe_pack(chosen)
+
     def _handle(self, m, rule, s: dict, client: HapanaClient, auth: Auth, rlog: RunLog) -> Outcome | None:
         name = m["name"]
         ds = s["_date"].isoformat()
@@ -272,15 +336,20 @@ class Engine:
             status = "gave_up" if tries + 1 >= self.settings.max_tries else "not_open"
             return save(status, f"Class status is '{session_status or 'unknown'}'")
 
+        pack_id, pack_note = self._pick_pack(m, s, client, auth, rlog)
+        if not pack_id:
+            status = "gave_up" if tries + 1 >= self.settings.max_tries else "failed"
+            return save(status, pack_note)
+
         try:
-            result = client.checkout(auth, s, s["_site_id"], m["package_subscription_id"])
+            result = client.checkout(auth, s, s["_site_id"], pack_id)
         except HapanaError as exc:
             # An expired token is worth retrying (next run logs in fresh); other hard errors aren't.
             final = (not exc.retryable and not exc.is_auth) or tries + 1 >= self.settings.max_tries
             return save("gave_up" if final else "failed", str(exc))
 
         if result.success:
-            return save("booked", result.message)
+            return save("booked", f"{result.message} - paid with {pack_note}" if pack_note else result.message)
         if "already" in result.message.lower() and "book" in result.message.lower():
             return save("already_booked", result.message)
         final = tries + 1 >= self.settings.max_tries

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ m.name }}'s class packs</h1>
+<p class="muted">You don't need to pick one. Before each booking the bot checks which packs can pay for that class and chooses the same one the website would (memberships first, then the pack that expires soonest). Only choose one here if you want a specific pack used whenever it's valid.</p>
+<div class="table-wrap"><table>
+  <tr><th>Pack</th><th>Type</th><th>Credits left</th><th>Expires</th><th></th></tr>
+  {% for p in rows %}
+  <tr>
+    <td>{{ p.name }}{% if p.status %}<div class="muted">{{ p.status }}</div>{% endif %}
+      {% if p.id and p.id == m.package_subscription_id %} <span class="badge s-booked">preferred</span>{% endif %}</td>
+    <td>{{ p.type }}</td>
+    <td>{{ "unlimited" if p.credits is number and p.credits >= 1000 else p.credits }}</td>
+    <td>{{ p.expiry }}</td>
+    <td>{% if p.id and p.id != m.package_subscription_id %}
+      <form class="inline" method="post" action="{{ base }}/members/{{ m.id }}/use-pack">
+        <input type="hidden" name="package_subscription_id" value="{{ p.id }}">
+        <button class="small" type="submit">Prefer this one</button>
+      </form>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="5" class="muted">The booking site returned no packs for {{ m.name }}.</td></tr>{% endfor %}
+</table></div>
+{% if m.package_subscription_id %}
+<form method="post" action="{{ base }}/members/{{ m.id }}/use-pack">
+  <input type="hidden" name="package_subscription_id" value="">
+  <p><button type="submit">Clear preferred pack (pick automatically)</button></p>
+</form>
+{% endif %}
+<details><summary class="muted">Raw reply from the booking site</summary><pre>{{ raw }}</pre></details>
+<p><a href="{{ base }}/members/{{ m.id }}">← Back to {{ m.name }}</a></p>
+{% endblock %}

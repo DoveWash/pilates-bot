@@ -13,9 +13,10 @@
   <input type="password" id="password" name="password" autocomplete="new-password" {{ "" if m.id else "required" }}>
   <div class="hint">{{ "Leave blank to keep the current password. " if m.id }}Stored encrypted.</div>
 
-  <label for="package_subscription_id">Class pack ID (packageSubscriptionID)</label>
+  <label for="package_subscription_id">Preferred class pack ID (optional)</label>
   <input type="text" id="package_subscription_id" name="package_subscription_id" value="{{ m.package_subscription_id or '' }}">
-  <div class="hint">The membership or class pack the booking is charged to. This was <code>package_SubscriptionID</code> in the old bot's settings.</div>
+  <div class="hint">Leave blank and the bot picks the right pack for each class automatically.
+    {% if m.id %}<a href="{{ base }}/members/{{ m.id }}/packs">Find my class packs</a>{% else %}After saving, use “Find my class packs” to see them.{% endif %}</div>
 
   <label for="discord_user_id">Discord user ID (optional)</label>
   <input type="text" id="discord_user_id" name="discord_user_id" value="{{ m.discord_user_id or '' }}">

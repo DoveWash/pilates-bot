@@ -53,6 +53,25 @@ def _message(data) -> str:
     return str(msg) if msg else ""
 
 
+def _find_list(data, key: str) -> list[dict] | None:
+    """Replies come as {"data": [...]}, {"data": {key: [...]}} or {key: [...]}; accept any of them."""
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return None
+    inner = data.get("data")
+    if isinstance(inner, list):
+        return inner
+    for container in (inner, data):
+        if isinstance(container, dict):
+            if isinstance(container.get(key), list):
+                return container[key]
+            lists = [v for v in container.values() if isinstance(v, list)]
+            if len(lists) == 1:
+                return lists[0]
+    return [] if isinstance(inner, dict) and not inner else None
+
+
 class HapanaClient:
     """One client per member: requests.Session keeps cookies, so never share it between people."""
 
@@ -156,6 +175,39 @@ class HapanaClient:
             if len(items) < PAGE_SIZE:
                 break
         return out
+
+    def valid_credits(self, auth: Auth, site_id: str, session: dict) -> list[dict]:
+        """Packs/memberships that can pay for this class (what the website shows at checkout).
+
+        Each item has packageSubscriptionID, packageName, packageType ('membership' or
+        'sessionPackage'), creditsRemaining and expiryDate.
+        """
+        session_type = session.get("sessionTypeName") or session.get("sessionType") or ""
+        if isinstance(session_type, dict):
+            session_type = session_type.get("sessionTypeName", "")
+        _, data = self._call(
+            "GET",
+            "/client/validcredits",
+            headers=self._auth_headers(auth),
+            params={
+                "siteID": site_id,
+                "clientID": auth.client_id,
+                "sessionTypeName": session_type,
+                "sessionDate": session.get("sessionDate"),
+            },
+        )
+        found = _find_list(data, "validCredits")
+        if found is None:
+            raise HapanaError("Unexpected valid-credits reply: " + (_message(data) or "no list"), retryable=True)
+        return found
+
+    def client_packages(self, auth: Auth) -> list[dict]:
+        """Everything the person owns (packs and memberships), for the 'Find my class packs' page."""
+        _, data = self._call("GET", "/client/packages", headers=self._auth_headers(auth))
+        found = _find_list(data, "packages")
+        if found is None:
+            raise HapanaError("Unexpected packages reply: " + (_message(data) or "no list"), retryable=True)
+        return found
 
     def checkout(self, auth: Auth, session: dict, site_id: str, package_subscription_id: str) -> BookingResult:
         payload = {

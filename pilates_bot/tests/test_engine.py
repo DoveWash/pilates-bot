@@ -25,8 +25,18 @@ class FakeClient:
     def list_sessions(self, auth, site_id, start, end):
         return [dict(s) for s in self.world["sessions"] if s["site"] == site_id]
 
+    def valid_credits(self, auth, site_id, session):
+        credits = self.world.get("credits", [])
+        if isinstance(credits, Exception):
+            raise credits
+        return credits
+
+    def client_packages(self, auth):
+        return self.world.get("credits", [])
+
     def checkout(self, auth, session, site_id, package_id):
         self.world["checkouts"].append((auth.client_id, session["sessionID"]))
+        self.world.setdefault("packs_used", []).append(package_id)
         result = self.world["checkout_results"].pop(0) if self.world["checkout_results"] else BookingResult(True, "ok")
         if isinstance(result, Exception):
             raise result
@@ -136,6 +146,68 @@ def test_series_id_match_and_backfill(env):
     env["engine"].run([TARGET])
     r = db.rule(env["rule"])
     assert (r["session_name"], r["start_time"]) == ("Reformer Pilates", "18:00")
+
+
+def _solo(env):
+    env["db"].save_member(env["b"], name="Sarah", email="sarah@x", password_enc="", package_subscription_id="",
+                          discord_user_id="", ha_notify_service="", enabled=0)
+
+
+PACK_OLD = {"packageSubscriptionID": "P-OLD", "packageName": "10 class pack", "packageType": "sessionPackage",
+            "creditsRemaining": 0, "expiryDate": "2026-12-01"}
+PACK_SOON = {"packageSubscriptionID": "P-SOON", "packageName": "5 class pack", "packageType": "sessionPackage",
+             "creditsRemaining": 2, "expiryDate": "2026-12-10"}
+PACK_LATE = {"packageSubscriptionID": "P-LATE", "packageName": "20 class pack", "packageType": "sessionPackage",
+             "creditsRemaining": 15, "expiryDate": "2027-06-01"}
+MEMBERSHIP = {"packageSubscriptionID": "M-1", "packageName": "Unlimited", "packageType": "membership",
+              "creditsRemaining": 9999}
+
+
+def test_saved_pack_used_when_still_valid(env):
+    _solo(env)  # Em's saved pack is "PKG"
+    env["world"]["credits"] = [PACK_LATE, dict(PACK_SOON, packageSubscriptionID="PKG")]
+    env["engine"].run([TARGET])
+    assert env["world"]["packs_used"] == ["PKG"]
+
+
+def test_renewed_pack_replaces_stale_saved_id(env):
+    _solo(env)
+    env["world"]["credits"] = [PACK_OLD, PACK_LATE, PACK_SOON]  # PKG gone, P-OLD empty
+    _, outcomes = env["engine"].run([TARGET])
+    assert env["world"]["packs_used"] == ["P-SOON"]  # soonest expiry with credits, like the website
+    assert env["db"].member(env["a"])["package_subscription_id"] == "P-SOON"
+    assert "5 class pack" in outcomes[0].message
+
+
+def test_membership_preferred(env):
+    _solo(env)
+    env["world"]["credits"] = [PACK_SOON, MEMBERSHIP]
+    env["engine"].run([TARGET])
+    assert env["world"]["packs_used"] == ["M-1"]
+
+
+def test_credits_embedded_in_session(env):
+    _solo(env)
+    env["world"]["sessions"][0]["validCredits"] = [PACK_LATE]
+    env["world"]["credits"] = HapanaError("should not be called")
+    env["engine"].run([TARGET])
+    assert env["world"]["packs_used"] == ["P-LATE"]
+
+
+def test_no_pack_and_nothing_saved(env):
+    _solo(env)
+    env["db"].set_member_package(env["a"], "")
+    env["world"]["credits"] = [PACK_OLD]
+    _, outcomes = env["engine"].run([TARGET])
+    assert outcomes[0].status == "failed" and "No class pack" in outcomes[0].message
+    assert env["world"]["checkouts"] == []
+
+
+def test_lookup_fails_falls_back_to_saved(env):
+    _solo(env)
+    env["world"]["credits"] = HapanaError("HTTP 500", retryable=True)
+    _, outcomes = env["engine"].run([TARGET])
+    assert outcomes[0].status == "booked" and env["world"]["packs_used"] == ["PKG"]
 
 
 def test_helpers():
