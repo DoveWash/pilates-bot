@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+{% if run %}
+<h1>Run #{{ run.id }} <span class="muted">({{ run.kind }})</span></h1>
+<p class="muted">Started {{ run.started_at }} · finished {{ run.finished_at or "still running" }} (UTC)</p>
+<p><strong>{{ run.summary }}</strong></p>
+<pre>{{ run.log }}</pre>
+{% else %}<p>Run not found.</p>{% endif %}
+<p><a href="{{ base }}/">← Dashboard</a></p>
+{% endblock %}

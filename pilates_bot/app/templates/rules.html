@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Classes to book</h1>
+<p class="muted">Each rule is a regular class and who to book into it. Tick several people to book a group into the same class. The easiest way to add one is from the <a href="{{ base }}/timetable">Timetable</a>.</p>
+<p><a class="btn primary" href="{{ base }}/rules/new">+ Add class</a></p>
+<div class="table-wrap"><table>
+  <tr><th>Class</th><th>When</th><th>Site</th><th>Who</th><th></th></tr>
+  {% for r in rules %}
+  <tr class="{{ '' if r.enabled else 'dim' }}">
+    <td><a href="{{ base }}/rules/{{ r.id }}">{{ r.label }}</a>
+      {% if r.session_name %}<div class="muted">{{ r.session_name }}{% if r.instructor %} · {{ r.instructor }}{% endif %}</div>{% endif %}</td>
+    <td>{{ WEEKDAYS[r.weekday] if r.weekday is not none else "any day" }} {{ r.start_time or "" }}</td>
+    <td>{{ sites.get(r.site_id, "?") }}</td>
+    <td>{{ ", ".join(who.get(r.id, [])) or "—" }}{% if not r.enabled %} <span class="badge">paused</span>{% endif %}</td>
+    <td><a class="btn small" href="{{ base }}/rules/{{ r.id }}">Edit</a></td>
+  </tr>
+  {% else %}<tr><td colspan="5" class="muted">No classes yet.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

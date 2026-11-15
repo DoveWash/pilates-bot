@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+<div class="card">
+  <p class="muted">Change these on the app's <strong>Configuration</strong> tab in Home Assistant, then restart the app.</p>
+  <div class="table-wrap"><table>
+    <tr><td>Timezone</td><td>{{ settings.timezone }}</td></tr>
+    <tr><td>Booking opens</td><td>{{ settings.run_at }}, {{ settings.days_ahead }} days ahead</td></tr>
+    <tr><td>Pre-login</td><td>{{ settings.prelogin_seconds }}s before</td></tr>
+    <tr><td>Retries (minutes after opening)</td><td>{{ settings.retry_minutes|join(", ") }} · give up after {{ settings.max_tries }} tries</td></tr>
+    <tr><td>Discord webhook</td><td>{{ "set" if settings.discord_webhook_url else "not set" }}</td></tr>
+    <tr><td>HA notify (admin summary)</td><td>{{ settings.ha_notify_service or "not set" }}{% if not ha_available %} <span class="muted">(no HA API access)</span>{% endif %}</td></tr>
+  </table></div>
+  <form method="post" action="{{ base }}/settings/test-notify"><p><button type="submit">Send test notification</button></p></form>
+</div>
+
+<h2>Sites</h2>
+<div class="table-wrap"><table>
+  <tr><th>Name</th><th>Site ID</th><th></th></tr>
+  {% for s in sites %}
+  <tr><td>{{ s.name }}</td><td><code>{{ s.id }}</code></td>
+    <td><form class="inline" method="post" action="{{ base }}/sites/{{ s.id }}/delete" onsubmit="return confirm('Remove this site?')"><button class="small danger" type="submit">Remove</button></form></td></tr>
+  {% endfor %}
+</table></div>
+<form class="card row" method="post" action="{{ base }}/sites/save">
+  <div><label for="sname">Site name</label><input type="text" id="sname" name="name" required></div>
+  <div><label for="sid">Site ID</label><input type="text" id="sid" name="site_id" required></div>
+  <div><button type="submit">Add / update site</button></div>
+</form>
+{% endblock %}

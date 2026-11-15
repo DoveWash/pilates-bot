@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Timetable</h1>
+{% if not members %}
+<p class="muted">Add at least one person on the <a href="{{ base }}/members">People</a> page first. Their login is used to read the timetable.</p>
+{% else %}
+<form class="card row" method="get" action="{{ base }}/timetable">
+  <div><label for="site_id">Site</label>
+    <select id="site_id" name="site_id">{% for s in sites %}<option value="{{ s.id }}" {{ "selected" if s.id == site_id }}>{{ s.name }}</option>{% endfor %}</select></div>
+  <div><label for="start">Week starting</label><input type="date" id="start" name="start" value="{{ start }}"></div>
+  <div><label for="member_id">View as</label>
+    <select id="member_id" name="member_id">{% for m in members %}<option value="{{ m.id }}" {{ "selected" if m.id == member_id }}>{{ m.name }}</option>{% endfor %}</select></div>
+  <div><button class="primary" type="submit">Show classes</button></div>
+</form>
+
+{% if sessions is not none %}
+<div class="table-wrap"><table>
+  <tr><th>When</th><th>Class</th><th>Instructor</th><th>Status</th><th></th></tr>
+  {% for s in sessions %}
+  <tr>
+    <td>{{ s._date.strftime("%a %d %b") if s._date else s.sessionDate }} {{ s._start }}</td>
+    <td>{{ s.sessionName }}</td>
+    <td>{{ s._instructor }}</td>
+    <td>{{ s.sessionStatus }}{% if s.bookingStatus %} · <strong>{{ s.bookingStatus }}</strong>{% endif %}</td>
+    <td><a class="btn small" href="{{ base }}/rules/new?site_id={{ site_id|urlencode }}&weekday={{ s._date.weekday() if s._date else '' }}&start_time={{ s._start|urlencode }}&session_name={{ s.sessionName|urlencode }}&session_id={{ s.sessionID|urlencode }}&label={{ (((WEEKDAYS[s._date.weekday()] + ' ') if s._date else '') ~ s.sessionName ~ ' ' ~ s._start)|urlencode }}">+ Book every week</a></td>
+  </tr>
+  {% else %}<tr><td colspan="5" class="muted">No classes found for that week.</td></tr>{% endfor %}
+</table></div>
+{% endif %}
+{% endif %}
+{% endblock %}

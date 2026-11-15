@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Booking history</h1>
+<p class="muted">Every class the bot has handled. A class is handled once per person: if someone cancels on the booking site, the bot won't re-book it. Use “Allow re-book” if you do want it to try again.</p>
+<div class="table-wrap"><table>
+  <tr><th>Class date</th><th>Class</th><th>Who</th><th>Status</th><th>Tries</th><th></th></tr>
+  {% for a in attempts %}
+  <tr>
+    <td>{{ a.session_date }} {{ a.start_time }}</td>
+    <td>{{ a.session_name }}<div class="muted">{{ sites.get(a.site_id, "") }}{% if a.instructor %} · {{ a.instructor }}{% endif %}</div></td>
+    <td>{{ a.member_name }}</td>
+    <td><span class="badge s-{{ a.status }}">{{ STYLE.get(a.status, ("", 0, a.status))[2] }}</span>
+      {% if a.message and a.status != "booked" %}<div class="muted">{{ a.message }}</div>{% endif %}</td>
+    <td>{{ a.tries }}</td>
+    <td><form class="inline" method="post" action="{{ base }}/attempts/{{ a.id }}/reset" onsubmit="return confirm('Let the bot try this class again?')"><button class="small" type="submit">Allow re-book</button></form></td>
+  </tr>
+  {% else %}<tr><td colspan="6" class="muted">Nothing yet.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

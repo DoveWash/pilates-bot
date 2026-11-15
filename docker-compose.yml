@@ -1,0 +1,17 @@
+# Run outside Home Assistant (any Docker host). Open http://<host>:8099
+services:
+  pilates-bot:
+    build: ./pilates_bot
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+    volumes:
+      - ./data:/data
+    environment:
+      PB_TIMEZONE: Australia/Sydney
+      PB_DISCORD_WEBHOOK_URL: ""        # your (new) webhook
+      WEB_PASSWORD: "change-me"         # basic-auth password for the web UI
+      # Optional: send HA notifications from outside HA
+      # HA_URL: http://homeassistant.local:8123
+      # HA_TOKEN: <long-lived access token>
+      # PB_HA_NOTIFY_SERVICE: mobile_app_daryls_iphone

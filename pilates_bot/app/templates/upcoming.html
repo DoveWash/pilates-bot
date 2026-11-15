@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Upcoming classes</h1>
+<p class="muted">The next 3 weeks of classes from your rules. Going away or can't make one? Skip it before it opens and the bot won't book it.</p>
+<div class="table-wrap"><table>
+  <tr><th>Date</th><th>Class</th><th>Who</th><th>Status</th><th></th></tr>
+  {% for r in rows %}
+  <tr class="{{ 'dim' if r.skipped else '' }}">
+    <td>{{ r.date.strftime("%a %d %b") }} {{ r.rule.start_time }}</td>
+    <td>{{ r.rule.label }}<div class="muted">{{ sites.get(r.rule.site_id, "") }}</div></td>
+    <td>{{ r.member.name }}</td>
+    <td>
+      {% if r.attempt %}<span class="badge s-{{ r.attempt.status }}">{{ STYLE.get(r.attempt.status, ("", 0, r.attempt.status))[2] }}</span>
+      {% elif r.skipped %}<span class="badge">Will skip</span>
+      {% elif r.opens <= today %}<span class="badge">Open - not handled</span>
+      {% else %}<span class="muted">opens {{ r.opens.strftime("%a %d %b") }}</span>{% endif %}
+    </td>
+    <td>
+      {% if not r.attempt %}
+      <form class="inline" method="post" action="{{ base }}/skip">
+        <input type="hidden" name="member_id" value="{{ r.member.id }}">
+        <input type="hidden" name="rule_id" value="{{ r.rule.id }}">
+        <input type="hidden" name="session_date" value="{{ r.date.isoformat() }}">
+        <button class="small" type="submit">{{ "Un-skip" if r.skipped else "Skip" }}</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">No upcoming classes. Add people to a class on the <a href="{{ base }}/rules">Classes</a> page.</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

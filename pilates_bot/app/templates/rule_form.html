@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ "Edit class" if rule.id else "Add class" }}</h1>
+<form class="card" method="post" action="{{ base }}/rules/save">
+  <input type="hidden" name="id" value="{{ rule.id or '' }}">
+  <label for="label">Name for this class</label>
+  <input type="text" id="label" name="label" value="{{ rule.label }}" required placeholder="e.g. Wed reformer with the girls">
+
+  <div class="row">
+    <div><label for="site_id">Site</label>
+      <select id="site_id" name="site_id" required>
+        {% for s in sites %}<option value="{{ s.id }}" {{ "selected" if s.id == rule.site_id }}>{{ s.name }}</option>{% endfor %}
+      </select></div>
+    <div><label for="weekday">Day</label>
+      <select id="weekday" name="weekday">
+        <option value="" {{ "selected" if rule.weekday is none }}>Any day</option>
+        {% for d in WEEKDAYS %}<option value="{{ loop.index0 }}" {{ "selected" if rule.weekday == loop.index0 }}>{{ d }}</option>{% endfor %}
+      </select></div>
+    <div><label for="start_time">Start time</label>
+      <input type="time" id="start_time" name="start_time" value="{{ rule.start_time }}"></div>
+  </div>
+
+  <label for="session_name">Class name on the booking site</label>
+  <input type="text" id="session_name" name="session_name" value="{{ rule.session_name }}" placeholder="e.g. Reformer Pilates">
+  <div class="hint">Matched with the day and start time. Has to be exactly as shown on the timetable (upper/lower case doesn't matter).</div>
+
+  <label for="instructor">Only with instructor (optional)</label>
+  <input type="text" id="instructor" name="instructor" value="{{ rule.instructor }}">
+
+  <label for="session_id">Series ID (optional)</label>
+  <input type="text" id="session_id" name="session_id" value="{{ rule.session_id }}">
+  <div class="hint">Filled in automatically. Matches this exact recurring class even if its name or time changes.</div>
+
+  <label>Book for</label>
+  <div class="checks">
+    {% for m in members %}
+    <label><input type="checkbox" name="member_ids" value="{{ m.id }}" {{ "checked" if m.id in member_ids }}> {{ m.name }}{% if not m.enabled %} (paused){% endif %}</label>
+    {% else %}<span class="muted">Add people first on the <a href="{{ base }}/members">People</a> page.</span>{% endfor %}
+  </div>
+
+  <div class="checks"><label><input type="checkbox" name="enabled" value="1" {{ "checked" if rule.enabled }}> Active</label></div>
+  <p><button class="primary" type="submit">Save</button> <a class="btn" href="{{ base }}/rules">Cancel</a></p>
+</form>
+{% if rule.id %}
+<form method="post" action="{{ base }}/rules/{{ rule.id }}/delete" onsubmit="return confirm('Delete this class rule?')">
+  <button class="danger" type="submit">Delete class</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>People</h1>
+<p class="muted">Everyone the bot books for. Each person uses their own booking-site login and class pack.</p>
+<p><a class="btn primary" href="{{ base }}/members/new">+ Add person</a></p>
+<div class="table-wrap"><table>
+  <tr><th>Name</th><th>Email</th><th>Notifications</th><th></th></tr>
+  {% for m in members %}
+  <tr class="{{ '' if m.enabled else 'dim' }}">
+    <td><a href="{{ base }}/members/{{ m.id }}">{{ m.name }}</a>{% if not m.enabled %} <span class="badge">paused</span>{% endif %}
+      {% if not m.package_subscription_id %}<div class="muted">⚠️ no class pack ID set</div>{% endif %}</td>
+    <td>{{ m.email }}</td>
+    <td>{% if m.discord_user_id %}Discord mention{% endif %}{% if m.discord_user_id and m.ha_notify_service %} · {% endif %}{% if m.ha_notify_service %}{{ m.ha_notify_service }}{% endif %}</td>
+    <td><form class="inline" method="post" action="{{ base }}/members/{{ m.id }}/test"><button class="small" type="submit">Test login</button></form></td>
+  </tr>
+  {% else %}<tr><td colspan="4" class="muted">Nobody yet.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pilates Bot</title>
+  <link rel="stylesheet" href="{{ base }}/static/style.css">
+</head>
+<body>
+<header>
+  <strong>🤖 Pilates Bot</strong>
+  <nav>
+    <a href="{{ base }}/">Dashboard</a>
+    <a href="{{ base }}/upcoming">Upcoming</a>
+    <a href="{{ base }}/rules">Classes</a>
+    <a href="{{ base }}/timetable">Timetable</a>
+    <a href="{{ base }}/members">People</a>
+    <a href="{{ base }}/history">History</a>
+    <a href="{{ base }}/settings">Settings</a>
+  </nav>
+</header>
+<main>
+  {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash bad">{{ err }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

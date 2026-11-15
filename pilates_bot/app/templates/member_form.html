@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ "Edit " ~ m.name if m.id else "Add person" }}</h1>
+<form class="card" method="post" action="{{ base }}/members/save" autocomplete="off">
+  <input type="hidden" name="id" value="{{ m.id or '' }}">
+  <label for="name">Name</label>
+  <input type="text" id="name" name="name" value="{{ m.name or '' }}" required>
+
+  <label for="email">Booking site email</label>
+  <input type="email" id="email" name="email" value="{{ m.email or '' }}" required>
+
+  <label for="password">Booking site password</label>
+  <input type="password" id="password" name="password" autocomplete="new-password" {{ "" if m.id else "required" }}>
+  <div class="hint">{{ "Leave blank to keep the current password. " if m.id }}Stored encrypted.</div>
+
+  <label for="package_subscription_id">Class pack ID (packageSubscriptionID)</label>
+  <input type="text" id="package_subscription_id" name="package_subscription_id" value="{{ m.package_subscription_id or '' }}">
+  <div class="hint">The membership or class pack the booking is charged to. This was <code>package_SubscriptionID</code> in the old bot's settings.</div>
+
+  <label for="discord_user_id">Discord user ID (optional)</label>
+  <input type="text" id="discord_user_id" name="discord_user_id" value="{{ m.discord_user_id or '' }}">
+  <div class="hint">So they get @mentioned. In Discord: Settings → Advanced → Developer Mode, then right-click their name → Copy User ID.</div>
+
+  <label for="ha_notify_service">Home Assistant notify target (optional)</label>
+  <input type="text" id="ha_notify_service" name="ha_notify_service" value="{{ m.ha_notify_service or '' }}" placeholder="mobile_app_her_phone">
+  <div class="hint">Sends their results as a push to their phone. They need the HA Companion app.</div>
+
+  <div class="checks"><label><input type="checkbox" name="enabled" value="1" {{ "checked" if m.enabled }}> Active (untick to pause all their bookings)</label></div>
+  <p><button class="primary" type="submit">Save</button> <a class="btn" href="{{ base }}/members">Cancel</a></p>
+</form>
+{% if m.id %}
+<form method="post" action="{{ base }}/members/{{ m.id }}/delete" onsubmit="return confirm('Remove this person and their booking history?')">
+  <button class="danger" type="submit">Remove person</button>
+</form>
+{% endif %}
+{% endblock %}
