@@ -4,13 +4,15 @@ services:
     build: ./pilates_bot
     restart: unless-stopped
     ports:
-      - "8099:8099"
+      - "8099:8099"   # admin UI (password protected)
+      # - "8100:8100" # friends' portal (also set PB_PORTAL_ENABLED: "true")
     volumes:
       - ./data:/data
     environment:
       PB_TIMEZONE: Australia/Sydney
       PB_DISCORD_WEBHOOK_URL: ""        # your (new) webhook
       WEB_PASSWORD: "change-me"         # basic-auth password for the web UI
+      PB_PORTAL_URL: ""                 # e.g. https://pilates.example.com (for invite links)
       # Optional: send HA notifications from outside HA
       # HA_URL: http://homeassistant.local:8123
       # HA_TOKEN: <long-lived access token>

@@ -28,6 +28,16 @@ class Settings:
     # e.g. "mobile_app_daryls_iphone" - gets the admin summary of every run.
     ha_notify_service: str = ""
     notify_when_nothing_to_book: bool = False
+    # If the app was down at the booking time (HA update/restart), book that night's classes
+    # when it starts again, as long as it's within this many hours. 0 = never catch up.
+    catchup_hours: int = 6
+    # Friends' portal: a separate, phone-friendly site on its own port, no HA access needed.
+    portal_enabled: bool = False
+    portal_port: int = 8100
+    # The address friends use, e.g. https://pilates.example.com (used to build invite links).
+    portal_url: str = ""
+    # Push notifications for people without HA: https://ntfy.sh (or your own ntfy server).
+    ntfy_server: str = "https://ntfy.sh"
     # Hapana widget id used to fetch the security token (Yarralumla's site id in the old bot).
     widget_id: str = "amhmQmdIdldDL3lRdHFpZ3BuOW40Zz09"
 

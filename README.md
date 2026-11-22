@@ -30,6 +30,55 @@ Books regular classes on the studio's Hapana booking system the moment they open
 
 > On the first run, a class she has already cancelled could be booked again, because the bot has no record of it yet. Use **Skip** on Upcoming for anything she doesn't want in the next 6 days before the first run.
 
+## Friends' portal (v2.4)
+
+Friends get their own small, phone-friendly site, and **never get access to Home Assistant**. It's a separate web server inside the app on port **8100**, and it has none of the admin pages.
+
+**It's off by default.** Nothing is listening on port 8100 until you turn it on:
+
+1. Pilates Bot → **Configuration**: set `portal_enabled: true`.
+2. Pilates Bot → **Configuration → Network**: set the port for `8100/tcp` to `8100`.
+3. Restart the app. The portal now works on your home Wi-Fi at `http://<ha-ip>:8100`, and invites appear on the People page. It's still not on the internet until you do the tunnel step below.
+
+What a friend can do: join with their own booking-app login (you never see their password), book classes for themselves ("just this one" or "every week"), skip a week, stop a regular class, pause everything, update their password, see their class packs, set up push notifications (ntfy or Discord), and delete their account. They only ever see their own bookings. You get a notification when a friend joins, books, stops a class or pauses.
+
+### Make it reachable from outside your home (once)
+
+Use a **Cloudflare Tunnel**. No ports open on your router, free HTTPS, and only the portal is exposed (not HA):
+
+1. Install the **Cloudflared** app from the HA community app store (needs a domain on Cloudflare).
+2. In its config, **leave `external_hostname` empty** (that option would publish Home Assistant itself) and add only the portal, using your HA box's LAN IP:
+   ```yaml
+   external_hostname: ""
+   additional_hosts:
+     - hostname: pilates.yourdomain.com
+       service: http://192.168.1.50:8100
+   ```
+   Only that hostname goes on the internet, and it reaches only the portal (port 8100), never HA (8123). If you already use Cloudflared for HA, keep your setup and just add the entry above.
+   Optional extra lock: put **Cloudflare Access** (free tier) in front of `pilates.yourdomain.com` with an email one-time-PIN policy, so even a leaked link needs the friend's email to open.
+3. In Pilates Bot's **Configuration** tab set `portal_url: https://pilates.yourdomain.com` and restart. Invite links now use that address.
+
+Don't forward port 8099, and don't expose HA itself for this. If you'd rather not expose anything, skip this: the portal still works on your home Wi-Fi.
+
+### Invite a friend
+
+**People → Invite a friend → Create invite link**, then text them the link. It works once and expires after 7 days (or after 5 wrong passwords). After joining, they land on their personal page; tell them to **Add to Home Screen** so it opens like an app.
+
+To give your wife (or anyone you added yourself) portal access: **People → Personal link**. **Revoke** or **New link** kills the old link immediately.
+
+### Notifications for friends
+
+Friends usually don't have HA's Companion app, so the portal uses **[ntfy](https://ntfy.sh)**: they install the free app, subscribe to the random topic shown on their **Me** page, and tap *Send a test*. Self-hosting ntfy? Set `ntfy_server`.
+
+## Other options
+
+| Option | Default | |
+|---|---|---|
+| `catchup_hours` | 6 | If HA was restarting/updating at midnight, book that night's classes when the app comes back, if it's within this many hours. 0 = off. |
+| `portal_enabled` | false | Turn on the friends' portal (also map port 8100 under Network). |
+| `portal_url` | "" | Public address of the portal, used in invite links. |
+| `ntfy_server` | https://ntfy.sh | ntfy server for push notifications. |
+
 ## Run without Home Assistant
 
 ```bash

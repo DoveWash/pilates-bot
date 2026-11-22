@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#03a9f4">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pilates">
+  <title>Pilates Bot</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  {% if token %}<link rel="manifest" href="/m/{{ token }}/manifest.webmanifest">{% endif %}
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="portal">
+<div id="loadbar" aria-hidden="true"></div>
+<header>
+  <strong>🧘 Pilates Bot</strong>
+  {% if me %}<span class="muted">Hi {{ me.name }}</span>{% endif %}
+</header>
+<main>
+  {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash bad">{{ err }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+{% if me %}
+<nav class="tabbar">
+  <a href="/" class="{{ 'on' if request.url.path == '/' or request.url.path.startswith('/m/') }}">🏠<span>Home</span></a>
+  <a href="/book" class="{{ 'on' if request.url.path == '/book' }}">➕<span>Book</span></a>
+  <a href="/me" class="{{ 'on' if request.url.path == '/me' }}">👤<span>Me</span></a>
+</nav>
+{% endif %}
+<script>
+(function () {
+  var busy = function () { document.body.classList.add("loading"); };
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest("a[href]");
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || a.target) return;
+    if (a.getAttribute("href").charAt(0) === "#") return;
+    busy();
+  });
+  document.addEventListener("submit", function (e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    if (form.dataset.busy) { e.preventDefault(); return; }
+    form.dataset.busy = "1";
+    busy();
+    var btn = e.submitter || form.querySelector("button[type=submit], button:not([type])");
+    if (btn && form.method.toLowerCase() === "post") {
+      var label = /book/i.test(btn.textContent) ? "Booking…" : "Working…";
+      setTimeout(function () { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = label; }, 0);
+    }
+  });
+  window.addEventListener("pageshow", function () {
+    document.body.classList.remove("loading");
+    document.querySelectorAll("form[data-busy]").forEach(function (f) { delete f.dataset.busy; });
+    document.querySelectorAll("button[data-label]").forEach(function (b) { b.disabled = false; b.textContent = b.dataset.label; });
+  });
+})();
+</script>
+</body>
+</html>

@@ -37,7 +37,7 @@ def client(tmp_path, monkeypatch):
     from app import config, main
     importlib.reload(config)
     importlib.reload(main)
-    app, sched = main.build()
+    app, sched, *_ = main.build()
     engine = next(o for o in gc.get_objects() if type(o).__name__ == "Engine" and o.db.conn and
                   str(tmp_path) in o.db.conn.execute("PRAGMA database_list").fetchone()[2])
     today = engine.today()

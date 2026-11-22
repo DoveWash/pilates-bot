@@ -2,17 +2,61 @@
 {% block content %}
 <h1>People</h1>
 <p class="muted">Everyone the bot books for. Each person uses their own booking-site login and class pack.</p>
+
+{% if new_link %}
+<div class="card linkcard" id="newlink">
+  <strong>Link for {{ link_for }}</strong>
+  <div class="copyrow"><input type="text" id="newlinkval" value="{{ new_link }}" readonly onclick="this.select()">
+    <button type="button" class="primary" onclick="navigator.clipboard.writeText(document.getElementById('newlinkval').value).then(()=>{this.textContent='Copied'})">Copy</button></div>
+  <p class="hint">This is the only time it's shown, so copy it now. Send it by text or WhatsApp. Anyone with the link can use it, so make a new one if it goes astray.
+  {% if not settings.portal_url %}<br>⚠️ <strong>portal_url</strong> isn't set in the app's configuration, so this link only works on your home network. See the README for making the portal reachable from outside.{% endif %}</p>
+</div>
+{% endif %}
+
 <p><a class="btn primary" href="{{ base }}/members/new">+ Add person</a></p>
 <div class="table-wrap"><table>
-  <tr><th>Name</th><th>Email</th><th>Notifications</th><th></th></tr>
+  <tr><th>Name</th><th>Email</th><th>Notifications</th><th>Friends' portal</th><th></th></tr>
   {% for m in members %}
   <tr class="{{ '' if m.enabled else 'dim' }}">
     <td><a href="{{ base }}/members/{{ m.id }}">{{ m.name }}</a>{% if not m.enabled %} <span class="badge">paused</span>{% endif %}</td>
     <td>{{ m.email }}</td>
-    <td>{% if m.discord_user_id %}Discord mention{% endif %}{% if m.discord_user_id and m.ha_notify_service %} · {% endif %}{% if m.ha_notify_service %}{{ m.ha_notify_service }}{% endif %}</td>
+    <td>{{ [("Discord" if m.discord_user_id else ""), (m.ha_notify_service or ""), ("ntfy" if m.ntfy_topic else "")]|select|join(" · ") }}</td>
+    <td>{% if m.portal_token_hash %}<span class="badge s-booked">has link</span>
+        <div class="muted small">{{ "last used " ~ m.portal_last_seen[:10] if m.portal_last_seen else "not used yet" }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
     <td><form class="inline" method="post" action="{{ base }}/members/{{ m.id }}/test"><button class="small" type="submit">Test login</button></form>
-      <a class="btn small" href="{{ base }}/members/{{ m.id }}/packs">Class packs</a></td>
+      <a class="btn small" href="{{ base }}/members/{{ m.id }}/packs">Class packs</a>
+      {% if settings.portal_enabled %}
+      <form class="inline" method="post" action="{{ base }}/members/{{ m.id }}/portal-link" {% if m.portal_token_hash %}onsubmit="return confirm('Make a new link? Their current link will stop working.')"{% endif %}><button class="small" type="submit">{{ "New link" if m.portal_token_hash else "Personal link" }}</button></form>
+      {% if m.portal_token_hash %}<form class="inline" method="post" action="{{ base }}/members/{{ m.id }}/portal-revoke" onsubmit="return confirm('Turn off this person\'s portal link?')"><button class="small danger" type="submit">Revoke</button></form>{% endif %}
+      {% endif %}</td>
   </tr>
-  {% else %}<tr><td colspan="4" class="muted">Nobody yet.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="5" class="muted">Nobody yet.</td></tr>{% endfor %}
 </table></div>
+
+{% if settings.portal_enabled %}
+<h2>👯 Invite a friend</h2>
+<div class="card">
+  <p class="muted">Your friend gets a link to the <strong>friends' portal</strong>, a small site of its own with no access to Home Assistant. They enter their own booking-site login (you never see their password), then book classes, skip weeks and get notifications on their phone. They only ever see their own bookings.</p>
+  <form class="row" method="post" action="{{ base }}/invites/new">
+    <div><label for="note">Who's it for? (just a note for you)</label><input type="text" id="note" name="note" placeholder="e.g. Sarah"></div>
+    <div><button class="primary" type="submit">Create invite link</button></div>
+  </form>
+</div>
+{% if invites %}
+<div class="table-wrap"><table>
+  <tr><th>For</th><th>Created</th><th>Status</th><th></th></tr>
+  {% for i in invites %}
+  <tr>
+    <td>{{ i.note or "—" }}</td>
+    <td>{{ i.created_at[:10] }}</td>
+    <td>{% if i.used_at %}<span class="badge s-booked">joined as {{ i.member_name or "(removed)" }}</span>
+        {% elif i.failures >= 5 %}<span class="badge s-gave_up">locked: too many wrong logins</span>
+        {% elif i.expires_at < now %}<span class="badge">expired</span>
+        {% else %}<span class="badge s-not_open">waiting · expires {{ i.expires_at[:10] }}</span>{% endif %}</td>
+    <td>{% if not i.used_at %}<form class="inline" method="post" action="{{ base }}/invites/{{ i.id }}/delete"><button class="small" type="submit">Remove</button></form>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+{% endif %}
 {% endblock %}

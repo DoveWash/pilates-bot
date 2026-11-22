@@ -1,0 +1,53 @@
+{% extends "portal/base.html" %}
+{% block content %}
+<h1>Book a class</h1>
+<div class="toolbar">
+  {% if sites|length > 1 %}<div class="tabs">
+    {% for s in sites %}<a class="tab {{ 'on' if s.id == site_id }}" href="/book?site_id={{ s.id|urlencode }}&start={{ start.isoformat() }}">{{ s.name }}</a>{% endfor %}
+  </div>{% endif %}
+  <div class="weeknav">
+    {% if prev %}<a class="btn small" href="/book?site_id={{ site_id|urlencode }}&start={{ prev.isoformat() }}">←</a>{% endif %}
+    <strong>{{ start.strftime("%d %b") }} – {{ week_end.strftime("%d %b") }}</strong>
+    <a class="btn small" href="/book?site_id={{ site_id|urlencode }}&start={{ next.isoformat() }}">→</a>
+  </div>
+</div>
+{% if days is not none %}
+  {% for day, sessions in days %}
+  <h2>{{ day.strftime("%A %d %B") }}</h2>
+  <div class="classlist">
+    {% for s in sessions %}
+    <details class="cls">
+      <summary>
+        <span class="time">{{ s._start }}</span>
+        <span class="what"><strong>{{ s.sessionName }}</strong>{% if s._instructor %}<span class="muted"> · {{ s._instructor }}</span>{% endif %}</span>
+        <span class="chips">
+          {% if s.bookingStatus %}<span class="badge s-booked">{{ s.bookingStatus }}</span>
+          {% elif s._attempt %}<span class="badge s-{{ s._attempt.status }}">{{ STYLE.get(s._attempt.status, ("", 0, s._attempt.status))[2] }}</span>{% endif %}
+          {% for p in s._plans %}<span class="badge">{{ "🔁 every week" if p == "weekly" else "📅 booked in" }}</span>{% endfor %}
+          {% if s.sessionStatus and s.sessionStatus|lower != "open" %}<span class="badge s-not_open">{{ s.sessionStatus }}</span>
+          {% elif not s._open %}<span class="muted small">opens {{ s._opens_on.strftime("%a %d %b") }}</span>{% endif %}
+        </span>
+        <span class="btn small primary">Book</span>
+      </summary>
+      <form method="post" action="/book" class="bookform">
+        <input type="hidden" name="back" value="{{ back }}">
+        <input type="hidden" name="site_id" value="{{ site_id }}">
+        <input type="hidden" name="session_id" value="{{ s.sessionID }}">
+        <input type="hidden" name="session_date" value="{{ s._date.isoformat() }}">
+        <input type="hidden" name="session_name" value="{{ s.sessionName }}">
+        <input type="hidden" name="start_time" value="{{ s._start }}">
+        <div class="checks stack">
+          <label><input type="radio" name="mode" value="once" checked> Just this one</label>
+          <label><input type="radio" name="mode" value="weekly"> Every {{ WEEKDAYS[s._date.weekday()] }} at {{ s._start }}</label>
+        </div>
+        <p class="hint">{% if s._open %}Booking is open, so this books straight away.{% else %}Booking opens {{ s._opens_on.strftime("%a %d %b") }} at {{ settings.run_at[:5] }}. The bot books it for you then.{% endif %}</p>
+        <button class="primary wide" type="submit">{{ "Book now" if s._open else "Book when it opens" }}</button>
+      </form>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No classes found for this week.</p>
+  {% endfor %}
+{% endif %}
+{% endblock %}

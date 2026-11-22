@@ -26,6 +26,10 @@
   <input type="text" id="ha_notify_service" name="ha_notify_service" value="{{ m.ha_notify_service or '' }}" placeholder="mobile_app_her_phone">
   <div class="hint">Sends their results as a push to their phone. They need the HA Companion app.</div>
 
+  <label for="ntfy_topic">ntfy topic (optional)</label>
+  <input type="text" id="ntfy_topic" name="ntfy_topic" value="{{ m.ntfy_topic or '' }}" placeholder="pilates-sarah-x7k2q9">
+  <div class="hint">Push notifications without Home Assistant: install the free <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer">ntfy</a> app and subscribe to this topic. Pick something hard to guess. Friends can set this themselves in the portal.</div>
+
   <div class="checks"><label><input type="checkbox" name="enabled" value="1" {{ "checked" if m.enabled }}> Active (untick to pause all their bookings)</label></div>
   <p><button class="primary" type="submit">Save</button> <a class="btn" href="{{ base }}/members">Cancel</a></p>
 </form>

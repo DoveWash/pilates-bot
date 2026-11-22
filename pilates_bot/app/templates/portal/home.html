@@ -1,0 +1,71 @@
+{% extends "portal/base.html" %}
+{% block content %}
+{% if welcome %}
+<div class="card welcome">
+  <h2>🎉 You're in, {{ me.name }}!</h2>
+  <p><strong>Save this page:</strong> it's your personal link. On iPhone tap <em>Share → Add to Home Screen</em>; on Android tap <em>⋮ → Add to Home screen</em>. Then it opens like an app.</p>
+  <p class="muted">Next: <a href="/book">book your first class</a>, and set up phone notifications on <a href="/me">Me</a>.</p>
+</div>
+{% elif token %}
+<p class="hint">Tip: add this page to your home screen so it opens like an app.</p>
+{% endif %}
+
+{% if not me.enabled %}<div class="flash bad">Your bookings are paused. Turn them back on under <a href="/me">Me</a>.</div>{% endif %}
+
+<h1>Coming up</h1>
+{% if rows %}
+<div class="classlist">
+  {% for r in rows %}
+  <div class="item {{ 'dim' if r.skipped }}">
+    <div class="when"><strong>{{ r.date.strftime("%a %d %b") }}</strong><span>{{ r.rule.start_time }}</span></div>
+    <div class="what">{{ r.rule.session_name or r.rule.label }}
+      <div class="muted small">{{ sites.get(r.rule.site_id, "") }}{{ " · every week" if not r.rule.on_date else "" }}</div></div>
+    <div class="state">
+      {% if r.attempt %}<span class="badge s-{{ r.attempt.status }}">{{ STYLE.get(r.attempt.status, ("", 0, r.attempt.status))[2] }}</span>
+      {% elif r.skipped %}<span class="badge">Skipping</span>
+      {% elif r.opens <= today %}<span class="badge s-not_open">Booking soon</span>
+      {% else %}<span class="muted small">books {{ r.opens.strftime("%a %d %b") }} {{ settings.run_at[:5] }}</span>{% endif %}
+      {% if not r.attempt %}
+      <form class="inline" method="post" action="/skip">
+        <input type="hidden" name="rule_id" value="{{ r.rule.id }}"><input type="hidden" name="session_date" value="{{ r.date.isoformat() }}">
+        <button class="small" type="submit">{{ "Un-skip" if r.skipped else "Skip" }}</button>
+      </form>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<p class="hint">Can't make a class that's already booked? Cancel it in the studio's app as usual. The bot won't book it again.</p>
+{% else %}
+<div class="card center"><p>Nothing booked yet.</p><p><a class="btn primary" href="/book">Book a class</a></p></div>
+{% endif %}
+
+{% if weekly or once %}
+<h2>My regular classes</h2>
+<div class="classlist">
+  {% for r in weekly + once %}
+  <div class="item">
+    <div class="when"><strong>{{ ("Every " ~ WEEKDAYS[r.weekday]) if not r.on_date else r.on_date }}</strong><span>{{ r.start_time }}</span></div>
+    <div class="what">{{ r.session_name or r.label }}<div class="muted small">{{ sites.get(r.site_id, "") }}</div></div>
+    <div class="state">
+      <form class="inline" method="post" action="/leave" onsubmit="return confirm('Stop booking this class? Anything already booked stays booked.')">
+        <input type="hidden" name="rule_id" value="{{ r.id }}"><button class="small danger" type="submit">Stop</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if recent %}
+<h2>Recently</h2>
+<div class="classlist">
+  {% for a in recent %}
+  <div class="item dim">
+    <div class="when"><strong>{{ a.session_date }}</strong><span>{{ a.start_time }}</span></div>
+    <div class="what">{{ a.session_name }}</div>
+    <div class="state"><span class="badge s-{{ a.status }}">{{ STYLE.get(a.status, ("", 0, a.status))[2] }}</span></div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

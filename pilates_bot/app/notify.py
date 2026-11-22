@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 
 import requests
 
@@ -39,19 +40,44 @@ class Notifier:
         else:
             self.ha_url = os.environ.get("HA_URL", "").rstrip("/") + "/api" if os.environ.get("HA_URL") else ""
             self.ha_token = os.environ.get("HA_TOKEN", "")
+        # Problems already reported tonight, so retries don't repeat "login failed" 5 more times.
+        self._reported: set[tuple] = set()
+        self._lock = threading.Lock()
 
     # -- public -----------------------------------------------------------
     def run_report(self, outcomes, kind: str):
-        if kind == "retry":
-            outcomes = [o for o in outcomes if o.status in RETRY_REPORTABLE]
-        else:
-            outcomes = [o for o in outcomes if o.status not in ALWAYS_QUIET]
+        with self._lock:
+            if kind in ("scheduled", "catchup"):
+                self._reported.clear()
+            if kind == "retry":
+                outcomes = [o for o in outcomes if o.status in RETRY_REPORTABLE
+                            and (o.member_id, o.status, o.session_date) not in self._reported]
+            else:
+                outcomes = [o for o in outcomes if o.status not in ALWAYS_QUIET]
+            self._reported.update((o.member_id, o.status, o.session_date) for o in outcomes
+                                  if o.status in ("login_failed", "error"))
         if not outcomes:
             if kind == "scheduled" and self.settings.notify_when_nothing_to_book:
                 self.alert("Pilates Bot", "Nothing to book tonight.")
             return
         self._discord_report(outcomes)
         self._ha_report(outcomes)
+        self._ntfy_report(outcomes)
+
+    def to_member(self, member, title: str, message: str) -> list[str]:
+        """Send one message straight to a person (their own channels only). Returns what was used."""
+        sent = []
+        if member["ntfy_topic"]:
+            sent.append("ntfy" if self._ntfy(member["ntfy_topic"], title, message) else "ntfy (FAILED)")
+        if member["ha_notify_service"]:
+            ok = self._ha(member["ha_notify_service"], title, message)
+            sent.append("Home Assistant" if ok else "Home Assistant (FAILED)")
+        if member["discord_user_id"] and self.settings.discord_webhook_url:
+            uid = member["discord_user_id"]
+            ok = self._discord({"content": f"<@{uid}> **{title}**\n{message}",
+                                "allowed_mentions": {"users": [uid]}})
+            sent.append("Discord" if ok else "Discord (FAILED)")
+        return sent
 
     def alert(self, title: str, message: str):
         self._discord({"content": f"**{title}**\n{message}"})
@@ -129,7 +155,33 @@ class Notifier:
             if svc and svc != self.settings.ha_notify_service:
                 self._ha(svc, "Pilates Bot", "\n".join(self._line(o) for o in items))
 
+    def _ntfy_report(self, outcomes):
+        members = self._members()
+        by_member: dict[int, list] = {}
+        for o in outcomes:
+            by_member.setdefault(o.member_id, []).append(o)
+        for mid, items in by_member.items():
+            topic = members[mid]["ntfy_topic"] if mid in members else ""
+            if topic:
+                booked = sum(o.status == "booked" for o in items)
+                title = f"Pilates Bot: {booked} booked" if booked else "Pilates Bot"
+                self._ntfy(topic, title, "\n".join(self._line(o) for o in items))
+
     # -- transports -------------------------------------------------------
+    def _ntfy(self, topic: str, title: str, message: str) -> bool:
+        server = (self.settings.ntfy_server or "https://ntfy.sh").rstrip("/")
+        try:
+            # JSON publishing keeps emoji/UTF-8 titles intact (HTTP headers can't carry them).
+            r = requests.post(server + "/", json={"topic": topic, "title": title, "message": message,
+                                                  "tags": ["robot"]}, timeout=10)
+            if r.status_code >= 300:
+                log.error("ntfy HTTP %s: %s", r.status_code, r.text[:200])
+                return False
+            return True
+        except requests.RequestException as exc:
+            log.error("ntfy failed: %s", exc)
+            return False
+
     def _discord(self, payload: dict) -> bool:
         url = self.settings.discord_webhook_url
         if not url:

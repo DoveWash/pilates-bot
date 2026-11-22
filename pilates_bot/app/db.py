@@ -5,9 +5,11 @@ The attempts table is what stops the old "re-book a class she cancelled" bug: ea
 """
 from __future__ import annotations
 
+import hashlib
+import secrets
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -73,6 +75,16 @@ CREATE TABLE IF NOT EXISTS runs (
     summary TEXT NOT NULL DEFAULT '',
     log TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT NOT NULL DEFAULT '',
+    member_id INTEGER REFERENCES members(id) ON DELETE SET NULL,
+    failures INTEGER NOT NULL DEFAULT 0
+);
 """
 
 YARRA = "amhmQmdIdldDL3lRdHFpZ3BuOW40Zz09"
@@ -94,8 +106,20 @@ SEED_RULES = [
 TERMINAL = {"booked", "already_booked", "skipped", "gave_up"}
 
 
+INVITE_DAYS = 7
+INVITE_MAX_FAILURES = 5  # wrong booking-site logins before an invite stops working
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
 class DB:
@@ -114,6 +138,10 @@ class DB:
         cols = {r["name"] for r in self.q("PRAGMA table_info(rules)")}
         if "on_date" not in cols:  # v2.2: one-off bookings (a single date instead of every week)
             self.x("ALTER TABLE rules ADD COLUMN on_date TEXT NOT NULL DEFAULT ''")
+        mcols = {r["name"] for r in self.q("PRAGMA table_info(members)")}
+        for col in ("portal_token_hash", "portal_last_seen", "ntfy_topic"):  # v2.4: friends' portal
+            if col not in mcols:
+                self.x(f"ALTER TABLE members ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
     def _seed(self):
         self.x("INSERT INTO sites (id, name) VALUES (?, ?)", (YARRA, "Yarralumla"))
@@ -161,6 +189,8 @@ class DB:
 
     def save_member(self, member_id: int | None, **f) -> int:
         cols = ["name", "email", "package_subscription_id", "discord_user_id", "ha_notify_service", "enabled"]
+        if "ntfy_topic" in f:
+            cols.append("ntfy_topic")
         if f.get("password_enc"):
             cols.append("password_enc")
         vals = [f[c] for c in cols]
@@ -177,6 +207,69 @@ class DB:
 
     def delete_member(self, member_id: int):
         self.x("DELETE FROM members WHERE id=?", (member_id,))
+
+    def member_by_email(self, email: str):
+        return self.one("SELECT * FROM members WHERE lower(email)=lower(?)", (email.strip(),))
+
+    def set_member_enabled(self, member_id: int, enabled: bool):
+        self.x("UPDATE members SET enabled=? WHERE id=?", (1 if enabled else 0, member_id))
+
+    def set_member_password(self, member_id: int, password_enc: str):
+        self.x("UPDATE members SET password_enc=? WHERE id=?", (password_enc, member_id))
+
+    def set_member_notify(self, member_id: int, *, ntfy_topic: str, discord_user_id: str):
+        self.x("UPDATE members SET ntfy_topic=?, discord_user_id=? WHERE id=?",
+               (ntfy_topic, discord_user_id, member_id))
+
+    # -- portal access ----------------------------------------------------
+    def new_portal_token(self, member_id: int) -> str:
+        """A fresh personal link token for this person; the old one stops working. Only the hash is kept."""
+        token = new_token()
+        self.x("UPDATE members SET portal_token_hash=? WHERE id=?", (hash_token(token), member_id))
+        return token
+
+    def revoke_portal_token(self, member_id: int):
+        self.x("UPDATE members SET portal_token_hash='' WHERE id=?", (member_id,))
+
+    def member_by_portal_token(self, token: str):
+        if not token or len(token) > 200:
+            return None
+        return self.one("SELECT * FROM members WHERE portal_token_hash=? AND portal_token_hash!=''",
+                        (hash_token(token),))
+
+    def touch_portal(self, member_id: int):
+        self.x("UPDATE members SET portal_last_seen=? WHERE id=?", (now_iso(), member_id))
+
+    # -- invites ----------------------------------------------------------
+    def create_invite(self, note: str = "", days: int = INVITE_DAYS) -> str:
+        token = new_token()
+        expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(timespec="seconds")
+        self.x("INSERT INTO invites (token_hash, note, created_at, expires_at) VALUES (?, ?, ?, ?)",
+               (hash_token(token), note.strip()[:80], now_iso(), expires))
+        return token
+
+    def invite(self, token: str):
+        """The invite for this token if it can still be used, else None."""
+        if not token or len(token) > 200:
+            return None
+        row = self.one("SELECT * FROM invites WHERE token_hash=?", (hash_token(token),))
+        if (not row or row["used_at"] or row["failures"] >= INVITE_MAX_FAILURES
+                or row["expires_at"] < now_iso()):
+            return None
+        return row
+
+    def invite_failed(self, invite_id: int):
+        self.x("UPDATE invites SET failures=failures+1 WHERE id=?", (invite_id,))
+
+    def use_invite(self, invite_id: int, member_id: int):
+        self.x("UPDATE invites SET used_at=?, member_id=? WHERE id=?", (now_iso(), member_id, invite_id))
+
+    def invites(self):
+        return self.q("""SELECT i.*, m.name AS member_name FROM invites i
+                         LEFT JOIN members m ON m.id=i.member_id ORDER BY i.id DESC LIMIT 50""")
+
+    def delete_invite(self, invite_id: int):
+        self.x("DELETE FROM invites WHERE id=?", (invite_id,))
 
     def members_with_rules(self):
         return self.q(
@@ -207,6 +300,14 @@ class DB:
     def add_rule_members(self, rule_id: int, member_ids: list[int]):
         for mid in member_ids:
             self.x("INSERT OR IGNORE INTO rule_members (rule_id, member_id) VALUES (?, ?)", (rule_id, mid))
+
+    def remove_rule_member(self, rule_id: int, member_id: int):
+        """Take one person off a booking. A one-off left with nobody on it is deleted."""
+        with self.lock:
+            self.x("DELETE FROM rule_members WHERE rule_id=? AND member_id=?", (rule_id, member_id))
+            r = self.rule(rule_id)
+            if r and r["on_date"] and not self.rule_member_ids(rule_id):
+                self.delete_rule(rule_id)
 
     def rule(self, rule_id: int):
         return self.one("SELECT * FROM rules WHERE id=?", (rule_id,))
@@ -307,6 +408,14 @@ class DB:
 
     def attempts_between(self, start: str, end: str):
         return self.q("SELECT * FROM attempts WHERE session_date BETWEEN ? AND ?", (start, end))
+
+    def get_attempt_for_rule(self, member_id: int, rule_id: int, session_date: str):
+        return self.one("SELECT * FROM attempts WHERE member_id=? AND rule_id=? AND session_date=?",
+                        (member_id, rule_id, session_date))
+
+    def member_attempts(self, member_id: int, limit=30):
+        return self.q("""SELECT * FROM attempts WHERE member_id=?
+                         ORDER BY session_date DESC, start_time DESC LIMIT ?""", (member_id, limit))
 
     # -- runs -------------------------------------------------------------
     def start_run(self, kind: str) -> int:

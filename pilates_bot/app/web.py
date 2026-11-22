@@ -14,12 +14,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .booking import WEEKDAYS, book_class, upcoming_rows
 from .engine import Engine, matches
+from .db import now_iso
 from .hapana import HapanaError
 from .notify import STYLE
 
 HERE = os.path.dirname(__file__)
-WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+# Home Assistant's ingress proxy. Only requests from it may skip the web password: anyone can
+# *send* an X-Ingress-Path header, so trusting the header alone let them straight in.
+INGRESS_PROXY = "172.30.32.2"
 
 
 def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> FastAPI:
@@ -32,7 +36,8 @@ def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> Fast
     @app.middleware("http")
     async def ingress_and_auth(request: Request, call_next):
         request.state.base = request.headers.get("X-Ingress-Path", "").rstrip("/")
-        if web_password and not request.headers.get("X-Ingress-Path"):
+        via_ingress = bool(request.headers.get("X-Ingress-Path")) and bool(request.client)             and request.client.host == INGRESS_PROXY
+        if web_password and not via_ingress:
             header = request.headers.get("Authorization", "")
             ok = False
             if header.startswith("Basic "):
@@ -92,30 +97,7 @@ def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> Fast
     @app.get("/upcoming", response_class=HTMLResponse)
     def upcoming(request: Request):
         today = engine.today()
-        days = [today + timedelta(days=i) for i in range(21)]
-        end = days[-1].isoformat()
-        attempts = {}
-        for a in db.attempts_between(today.isoformat(), end):
-            attempts[(a["member_id"], a["rule_id"], a["session_date"])] = a
-        skips = db.skips_between(today.isoformat(), end)
-        members = {m["id"]: m for m in db.members(enabled_only=True)}
-        rows = []
-        for rule in db.rules():
-            if not rule["enabled"] or (rule["weekday"] is None and not rule["on_date"]):
-                continue
-            for mid in sorted(db.rule_member_ids(rule["id"])):
-                if mid not in members:
-                    continue
-                for d in days:
-                    if rule["on_date"] and d.isoformat() != rule["on_date"]:
-                        continue
-                    if not rule["on_date"] and d.weekday() != rule["weekday"]:
-                        continue
-                    key = (mid, rule["id"], d.isoformat())
-                    rows.append({"date": d, "rule": rule, "member": members[mid],
-                                 "attempt": attempts.get(key), "skipped": key in skips,
-                                 "opens": d - timedelta(days=settings.days_ahead)})
-        rows.sort(key=lambda r: (r["date"], r["rule"]["start_time"], r["member"]["name"]))
+        rows = upcoming_rows(db, settings, today)
         return page(request, "upcoming.html", rows=rows, sites=db.site_names(), today=today)
 
     @app.post("/skip")
@@ -248,46 +230,55 @@ def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> Fast
             return go(request, back, err="That class has no valid date")
         if d < engine.today():
             return go(request, back, err="That class has already happened")
-        site_id, session_id = f.get("site_id", ""), f.get("session_id", "")
-        name, start = (f.get("session_name") or "").strip(), (f.get("start_time") or "")[:5]
-        weekly = f.get("mode") == "weekly"
-        od = "" if weekly else d.isoformat()
-        sites = db.site_names()
-
-        existing = db.find_rule(site_id=site_id, on_date=od, session_id=session_id, weekday=d.weekday(),
-                                start_time=start, session_name=name)
-        if existing:
-            rule_id = existing["id"]
-            db.add_rule_members(rule_id, member_ids)
-            if not existing["enabled"]:
-                db.set_rule_enabled(rule_id, True)
-        else:
-            label = f"{WEEKDAYS[d.weekday()]} {name} {start}" + ("" if weekly else d.strftime(" (%d %b)"))
-            site_short = sites.get(site_id, "")
-            rule_id = db.save_rule(None, member_ids, label=f"{label} - {site_short}" if site_short else label,
-                                   site_id=site_id, weekday=d.weekday(), start_time=start, session_name=name,
-                                   instructor="", session_id=session_id, enabled=1, on_date=od)
-
-        who = ", ".join(m["name"] for m in db.members() if m["id"] in member_ids)
-        if d <= engine.opening_date():
-            _, outcomes = engine.run([d], "manual", rule_ids={rule_id})
-            results = "; ".join(f"{o.member_name}: {STYLE.get(o.status, ('', 0, o.status))[2]}"
-                                + (f" ({o.message})" if o.status not in ("booked",) and o.message else "")
-                                for o in outcomes) or "nothing to do (already handled)"
-            extra = " Booking every week from now on." if weekly else ""
-            bad = any(o.status in ("gave_up", "login_failed", "error", "failed", "not_found") for o in outcomes)
-            return go(request, back, msg="" if bad else f"{name} {d:%a %d %b}: {results}.{extra}",
-                      err=f"{name} {d:%a %d %b}: {results}.{extra}" if bad else "")
-        opens = d - timedelta(days=settings.days_ahead)
-        when = f"at {settings.run_at[:5]} on {opens:%a %d %b}, when booking opens"
-        msg = (f"{name} booked for {who} every week. The first one ({d:%a %d %b}) will be booked {when}."
-               if weekly else f"{name} on {d:%a %d %b} will be booked for {who} {when}.")
-        return go(request, back, msg=msg)
+        reply = book_class(db, engine, settings, member_ids=member_ids, site_id=f.get("site_id", ""),
+                           session_id=f.get("session_id", ""), d=d,
+                           name=(f.get("session_name") or "").strip(), start=(f.get("start_time") or "")[:5],
+                           weekly=f.get("mode") == "weekly")
+        return go(request, back, msg=reply.message if reply.ok else "", err="" if reply.ok else reply.message)
 
     # -------------------------------------------------------------- members
+    def portal_link(request: Request, path: str) -> str:
+        root = settings.portal_url.rstrip("/")
+        if not root:
+            host = (request.url.hostname or "homeassistant.local")
+            root = f"http://{host}:{settings.portal_port}"
+        return root + path
+
     @app.get("/members", response_class=HTMLResponse)
     def members(request: Request):
-        return page(request, "members.html", members=db.members())
+        new_link = request.query_params.get("link", "")
+        return page(request, "members.html", members=db.members(), invites=db.invites(),
+                    new_link=new_link if new_link.startswith(("http://", "https://")) else "",
+                    link_for=request.query_params.get("for", ""), settings=settings, now=now_iso())
+
+    @app.post("/invites/new")
+    def invite_new(request: Request, note: str = Form("")):
+        if not settings.portal_enabled:
+            return go(request, "/members", err="The friends' portal is turned off in the app's configuration")
+        token = db.create_invite(note)
+        link = portal_link(request, f"/join/{token}")
+        return go(request, f"/members?link={quote(link)}&for={quote(note.strip() or 'a friend')}",
+                  msg="Invite created - send this link to your friend. It works once, for 7 days.")
+
+    @app.post("/invites/{invite_id}/delete")
+    def invite_delete(request: Request, invite_id: int):
+        db.delete_invite(invite_id)
+        return go(request, "/members", msg="Invite removed")
+
+    @app.post("/members/{member_id}/portal-link")
+    def member_portal_link(request: Request, member_id: int):
+        m = db.member(member_id)
+        if not m:
+            return go(request, "/members", err="Member not found")
+        token = db.new_portal_token(member_id)
+        link = portal_link(request, f"/m/{token}")
+        return go(request, f"/members?link={quote(link)}&for={quote(m['name'])}",
+                  msg=f"New personal link for {m['name']}. Any older link of theirs has stopped working.")
+
+    @app.post("/members/{member_id}/portal-revoke")
+    def member_portal_revoke(request: Request, member_id: int):
+        db.revoke_portal_token(member_id)
+        return go(request, "/members", msg="Portal access removed")
 
     @app.get("/members/new", response_class=HTMLResponse)
     def member_new(request: Request):
@@ -313,6 +304,7 @@ def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> Fast
             package_subscription_id=(f.get("package_subscription_id") or "").strip(),
             discord_user_id=(f.get("discord_user_id") or "").strip(),
             ha_notify_service=(f.get("ha_notify_service") or "").strip(),
+            ntfy_topic=(f.get("ntfy_topic") or "").strip(),
             enabled=1 if f.get("enabled") else 0,
         )
         engine.forget_login(member_id)  # email/password may have changed
@@ -322,6 +314,8 @@ def create_app(db, vault, settings, engine: Engine, scheduler, notifier) -> Fast
     @app.post("/members/{member_id}/test")
     def member_test(request: Request, member_id: int):
         m = db.member(member_id)
+        if not m:
+            return go(request, "/members", err="Member not found")
         try:
             return go(request, "/members", msg=f"{m['name']}: {engine.test_login(m)}")
         except (HapanaError, ValueError) as exc:

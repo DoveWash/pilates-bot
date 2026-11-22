@@ -205,6 +205,10 @@ class Engine:
         _, auth = self._login(member, fresh=True)
         return f"Login OK (client id {auth.client_id})"
 
+    def check_credentials(self, email: str, password: str) -> Auth:
+        """Log in with details that aren't saved yet (a friend joining). Raises HapanaError if wrong."""
+        return self.client_factory().login(email, password)
+
     def find_packs(self, member) -> list[dict]:
         return self._with_login(member, lambda c, a: c.client_packages(a))
 
@@ -236,8 +240,10 @@ class Engine:
 
     # -- run --------------------------------------------------------------
     def run(self, dates: list[date], kind: str = "scheduled", notify: bool = True,
-            rule_ids: set[int] | None = None) -> tuple[int, list[Outcome]]:
-        """Book matching classes on `dates`. rule_ids limits the run to those rules (used by 'book now')."""
+            rule_ids: set[int] | None = None,
+            member_ids: set[int] | None = None) -> tuple[int, list[Outcome]]:
+        """Book matching classes on `dates`. rule_ids / member_ids limit the run to those rules and
+        people (used by 'book now', so booking a friend doesn't also act for others on the same class)."""
         with self._run_lock:
             run_id = self.db.start_run(kind)
             rlog = RunLog()
@@ -248,6 +254,8 @@ class Engine:
                 if rule_ids is not None:
                     wanted = {mid for rid in rule_ids for mid in self.db.rule_member_ids(rid)}
                     members = [m for m in members if m["id"] in wanted]
+                if member_ids is not None:
+                    members = [m for m in members if m["id"] in member_ids]
                 if not members:
                     rlog("No enabled members with enabled rules - nothing to do")
                 with ThreadPoolExecutor(max_workers=max(1, len(members))) as pool:
@@ -373,8 +381,15 @@ class Engine:
             rlog("[%s] %s already handled (%s) - leaving it alone", name, label, existing["status"])
             return None
         tries = existing["tries"] if existing else 0
+        # Before the booking window opens a failure says nothing about the class, so it mustn't use
+        # up tries (otherwise a few early "Book now" clicks could make the bot give up for good).
+        early = s["_date"] > self.opening_date()
+
+        def give_up_or(retry_status):
+            return retry_status if early or tries + 1 < self.settings.max_tries else "gave_up"
 
         def save(status, message="", count_try=True):
+            count_try = count_try and not early
             self.db.save_attempt(member_id=m["id"], rule_id=rule["id"], session=s, session_date=ds,
                                  status=status, message=message, count_try=count_try)
             rlog("[%s] %s -> %s %s", name, label, status, message)
@@ -389,13 +404,11 @@ class Engine:
 
         session_status = str(s.get("sessionStatus") or "").strip().lower()
         if session_status != "open":
-            status = "gave_up" if tries + 1 >= self.settings.max_tries else "not_open"
-            return save(status, f"Class status is '{session_status or 'unknown'}'")
+            return save(give_up_or("not_open"), f"Class status is '{session_status or 'unknown'}'")
 
         pack_id, pack_note = self._pick_pack(m, s, client, auth, rlog)
         if not pack_id:
-            status = "gave_up" if tries + 1 >= self.settings.max_tries else "failed"
-            return save(status, pack_note)
+            return save(give_up_or("failed"), pack_note)
 
         try:
             try:
@@ -408,12 +421,12 @@ class Engine:
                 result = client.checkout(auth, s, s["_site_id"], pack_id)
         except HapanaError as exc:
             # An expired token is worth retrying (next run logs in fresh); other hard errors aren't.
-            final = (not exc.retryable and not exc.is_auth) or tries + 1 >= self.settings.max_tries
-            return save("gave_up" if final else "failed", str(exc))
+            if not exc.retryable and not exc.is_auth and not early:
+                return save("gave_up", str(exc))
+            return save(give_up_or("failed"), str(exc))
 
         if result.success:
             return save("booked", f"{result.message} - paid with {pack_note}" if pack_note else result.message)
         if "already" in result.message.lower() and "book" in result.message.lower():
             return save("already_booked", result.message)
-        final = tries + 1 >= self.settings.max_tries
-        return save("gave_up" if final else "failed", result.message)
+        return save(give_up_or("failed"), result.message)
